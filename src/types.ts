@@ -1,7 +1,17 @@
+export type PlayerId = 'player_1' | 'player_2';
+
+export type CategoryOwnerId = PlayerId | 'ai';
+
 export interface Player {
-  id: 'player_1' | 'player_2';
+  id: PlayerId;
   name: string;
   color: string;
+  connected?: boolean;
+}
+
+export interface MatchPlayer extends Player {
+  connected: boolean;
+  score: number;
 }
 
 export interface PromptLog {
@@ -12,12 +22,24 @@ export interface PromptLog {
 
 export interface Category {
   id: string;
+  slotIndex: number;
   name: string;
   description: string;
-  createdBy: 'player_1' | 'player_2' | 'ai';
-  capturedBy: 'player_1' | 'player_2' | null;
-  history: PromptLog[]; 
+  createdBy: CategoryOwnerId;
+  ownerId: CategoryOwnerId;
+  capturedBy: PlayerId | null;
+  history: PromptLog[];
   isTie: boolean;
+}
+
+export interface RubricScores {
+  wit: number;
+  creativity: number;
+  adherence_to_category: number;
+  bonus_for_media_politics_references: number;
+  effort: number;
+  elegance_of_prose: number;
+  impressiveness: number;
 }
 
 export interface JudgingResult {
@@ -28,19 +50,42 @@ export interface JudgingResult {
   effort: string;
   elegance_of_prose: string;
   impressiveness: string;
+  player_1_scores: RubricScores;
+  player_2_scores: RubricScores;
   player_1_feedback: string;
   player_2_feedback: string;
   verdict_sentence: string;
-  winner_id: 'player_1' | 'player_2' | 'tie';
+  winner_id: PlayerId | 'tie';
 }
 
-export type GameScreen = 
-  | 'API_SETUP'
-  | 'ONBOARDING'
-  | 'CATEGORY_CREATION'
-  | 'BATTLE_PATH'
-  | 'HANDOFF'
-  | 'PROMPT_ENTRY'
-  | 'RESOLVING'
-  | 'RESULTS_MODAL'
-  | 'WIN_SCREEN';
+export type MatchPhase =
+  | 'queue'
+  | 'category_setup'
+  | 'category_review'
+  | 'battle_path'
+  | 'prompt_entry'
+  | 'resolving'
+  | 'results'
+  | 'win';
+
+export interface MatchView {
+  matchId: string;
+  modelId: string;
+  phase: MatchPhase;
+  selfId: PlayerId;
+  players: MatchPlayer[];
+  categories: Category[];
+  activePlayer: PlayerId;
+  activeCategoryId: string | null;
+  previewSelections: Partial<Record<PlayerId, string | null>>;
+  categorySetupLockedPlayers: PlayerId[];
+  categoryTypingPlayers: PlayerId[];
+  reviewLockedPlayers: PlayerId[];
+  promptLockedPlayers: PlayerId[];
+  resultLockedPlayers: PlayerId[];
+  typingPlayers: PlayerId[];
+  promptDraft: string;
+  currentResultLog: PromptLog | null;
+  winnerId: PlayerId | 'tie' | null;
+  systemMessage: string | null;
+}

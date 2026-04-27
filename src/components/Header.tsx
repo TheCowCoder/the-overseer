@@ -1,32 +1,109 @@
-import { Player } from "../types";
+import { ChevronDown } from 'lucide-react';
+
+import type { ModelOption } from '../../shared/modelOptions.js';
+import type { MatchPlayer, PlayerId } from '../types';
 import { cn } from "./Button";
 
-export const Header = ({ players, activePlayerId }: { players: Player[], activePlayerId?: string }) => {
-  if (players.length === 0) return null;
+interface HeaderProps {
+  players: MatchPlayer[];
+  spinnerPlayerIds?: PlayerId[];
+  lockedPlayerIds?: PlayerId[];
+  disconnectedPlayerIds?: PlayerId[];
+  centerLabel?: string;
+  modelOptions?: ModelOption[];
+  selectedModelId?: string;
+  onModelChange?: (modelId: string) => void;
+}
 
-  return (
-    <div className="fixed top-0 w-full max-w-md flex justify-between p-4 z-40 bg-white/80 backdrop-blur-md border-b-2 border-gray-100">
-      {players.map((p) => (
-        <div key={p.id} className="flex items-center gap-3">
-          <div 
-            className={cn(
-              "w-12 h-12 rounded-full transition-all border-4",
-              activePlayerId === p.id ? "scale-110 shadow-lg" : "scale-100 border-transparent"
-            )}
-            style={{ 
-              backgroundColor: p.color,
-              borderColor: activePlayerId === p.id ? p.color : 'transparent',
-              boxShadow: activePlayerId === p.id ? `0 0 15px ${p.color}80` : 'none'
+export const Header = ({
+  players,
+  spinnerPlayerIds = [],
+  lockedPlayerIds = [],
+  disconnectedPlayerIds = [],
+  centerLabel = "Live Match",
+  modelOptions,
+  selectedModelId,
+  onModelChange,
+}: HeaderProps) => {
+  const leftPlayer = players[0];
+  const rightPlayer = players[1];
+
+  if (!leftPlayer) return null;
+
+  const renderPlayer = (player: MatchPlayer | undefined, alignRight = false) => {
+    if (!player) {
+      return <div />;
+    }
+
+    const isLocked = lockedPlayerIds.includes(player.id);
+    const isDisconnected = disconnectedPlayerIds.includes(player.id) || !player.connected;
+    const showSpinner = spinnerPlayerIds.includes(player.id);
+    const statusLabel = isDisconnected ? 'Offline' : isLocked ? 'Locked in' : null;
+
+    return (
+      <div className={cn("flex min-w-0 items-center gap-2", alignRight && "flex-row-reverse justify-self-end text-right")}>
+        <div className="relative shrink-0">
+          {showSpinner && (
+            <div className="absolute -inset-1 rounded-full border-[3px] border-transparent border-r-gray-600 border-t-gray-600 animate-spin" />
+          )}
+          <div
+            className="relative h-10 w-10 rounded-full border-2 border-white shadow-sm"
+            style={{
+              backgroundColor: player.color,
+              opacity: isDisconnected ? 0.45 : 1,
             }}
           />
-          <span className={cn(
-            "font-bold text-lg", 
-            activePlayerId === p.id ? "text-gray-900" : "text-gray-400"
-          )}>
-            {p.name}
-          </span>
         </div>
-      ))}
+
+        <div className={cn("min-w-0", alignRight && "text-right")}>
+          <div className={cn("flex items-center gap-2", alignRight && "flex-row-reverse")}>
+            <span className="truncate text-sm font-bold text-gray-700">{player.name}</span>
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">
+              {player.score}
+            </span>
+          </div>
+
+          {statusLabel && (
+            <span className={cn(
+              "mt-1 inline-flex rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.18em]",
+              isDisconnected ? "bg-red-100 text-red-600" : "bg-emerald-100 text-emerald-700",
+            )}>
+              {statusLabel}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="fixed top-0 z-40 w-full max-w-md rounded-b-[2rem] border-b-2 border-gray-100 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-md">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,10.75rem)_minmax(0,1fr)] items-center gap-2">
+        {renderPlayer(leftPlayer)}
+
+        {modelOptions && selectedModelId && onModelChange ? (
+          <div className="relative">
+            <select
+              value={selectedModelId}
+              onChange={(event) => onModelChange(event.target.value)}
+              className="w-full appearance-none rounded-full border border-gray-200 bg-white py-2 pl-3 pr-8 text-[10px] font-black tracking-[0.14em] text-gray-600 shadow-sm outline-none transition-all hover:border-gray-300 focus:border-duo-blue"
+            >
+              {modelOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          </div>
+        ) : (
+          <div className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 shadow-sm">
+            {centerLabel}
+          </div>
+        )}
+
+        {renderPlayer(rightPlayer, true)}
+      </div>
     </div>
   );
 };

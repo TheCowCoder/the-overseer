@@ -1,498 +1,981 @@
-import { useState, useEffect } from 'react';
-import { Player, Category, GameScreen, JudgingResult } from './types';
-import { initGemini, generateAICategory, judgeTurn, fetchPrompt } from './lib/gemini';
-import { Button } from './components/Button';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Check, Info, LoaderCircle, Play, Trophy, WifiOff, X } from 'lucide-react';
+
+import { Button, cn } from './components/Button';
 import { Header } from './components/Header';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Settings, Plus, Play, Info, X, Check, Trophy } from 'lucide-react';
-import { cn } from './components/Button';
+import { JudgingLogPanel } from './components/JudgingLogPanel';
+import { DEFAULT_MODEL_ID, MODEL_OPTIONS, isValidModelId } from '../shared/modelOptions.js';
+import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, buildBoardPath } from './lib/gameShared';
+import { socket } from './lib/socket';
+import type { Category, MatchView, PlayerId } from './types';
 
-const COLORS = ['#58cc02', '#1cb0f6', '#ff4b4b', '#ffc800', '#ce82ff'];
+const COLORS = ['#58cc02', '#1cb0f6', '#ff4b4b', '#ffc800', '#ce82ff'] as const;
+const SESSION_STORAGE_KEY = 'overseer-session-id';
+const PROFILE_STORAGE_KEY = 'overseer-profile';
 
-export default function App() {
-  const [screen, setScreen] = useState<GameScreen>('API_SETUP');
-  const [apiKey, setApiKey] = useState('');
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [activePlayer, setActivePlayer] = useState<'player_1' | 'player_2'>('player_1');
-  const [categories, setCategories] = useState<Category[]>([]);
-  
-  // Turn State
-  const [activeCategory, setActiveCategory] = useState<Category | null>(null);
-  const [p1Draft, setP1Draft] = useState('');
-  const [p2Draft, setP2Draft] = useState('');
-  const [judgingResult, setJudgingResult] = useState<JudgingResult | null>(null);
-  const [hasSeenIntro, setHasSeenIntro] = useState({ player_1: false, player_2: false });
-  const [introText, setIntroText] = useState('');
+interface HomeProfile {
+  name: string;
+  color: string;
+}
 
-  // Modals & Inputs
-  const [showCatModal, setShowCatModal] = useState(false);
-  const [editingCat, setEditingCat] = useState<Category | null>(null);
-  const [catNameInput, setCatNameInput] = useState('');
-  const [catDescInput, setCatDescInput] = useState('');
+interface OnlineMultiplayerAppProps {
+  onBack?: () => void;
+}
+
+const readStoredProfile = (): HomeProfile => {
+  if (typeof window === 'undefined') {
+    return { name: '', color: COLORS[0] };
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(PROFILE_STORAGE_KEY);
+
+    if (!rawValue) {
+      return { name: '', color: COLORS[0] };
+    }
+
+    const parsedValue = JSON.parse(rawValue) as Partial<HomeProfile>;
+    return {
+      name: typeof parsedValue.name === 'string' ? parsedValue.name : '',
+      color:
+        typeof parsedValue.color === 'string' && COLORS.includes(parsedValue.color as (typeof COLORS)[number])
+          ? parsedValue.color
+          : COLORS[0],
+    };
+  } catch {
+    return { name: '', color: COLORS[0] };
+  }
+};
+
+const readStoredSessionId = () => {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  return window.localStorage.getItem(SESSION_STORAGE_KEY) ?? '';
+};
+
+const ownerLabel = (category: Category, players: MatchView['players']) => {
+  if (category.ownerId === 'ai') {
+    return 'AI Slot';
+  }
+
+  return players.find((player) => player.id === category.ownerId)?.name ?? 'Player Slot';
+};
+
+export default function App({ onBack }: OnlineMultiplayerAppProps) {
+  const [profile, setProfile] = useState<HomeProfile>(readStoredProfile);
+  const [sessionId, setSessionId] = useState<string>(readStoredSessionId);
+  const [queueing, setQueueing] = useState(false);
+  const [matchView, setMatchView] = useState<MatchView | null>(null);
+  const [socketConnected, setSocketConnected] = useState(socket.connected);
+  const [error, setError] = useState<string | null>(null);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [categoryNameInput, setCategoryNameInput] = useState('');
+  const [categoryDescriptionInput, setCategoryDescriptionInput] = useState('');
+  const [previewCategoryId, setPreviewCategoryId] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [selectedModelId, setSelectedModelId] = useState(DEFAULT_MODEL_ID);
+
+  const typingTimeoutRef = useRef<number | null>(null);
+  const categoryTypingTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const key = localStorage.getItem('GEMINI_KEY');
-    if (key) {
-      setApiKey(key);
-      initGemini(key);
-      setScreen('ONBOARDING');
+    window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+  }, [profile]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      window.localStorage.removeItem(SESSION_STORAGE_KEY);
+      return;
     }
-    fetchPrompt('ui_intro_message.md').then(setIntroText).catch(console.error);
+
+    window.localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+  }, [sessionId]);
+
+  useEffect(() => {
+    socket.connect();
+
+    const handleConnect = () => {
+      setSocketConnected(true);
+
+      if (sessionId) {
+        socket.emit('player:resume', { sessionId });
+      }
+    };
+
+    const handleDisconnect = () => {
+      setSocketConnected(false);
+    };
+
+    const handleSessionReady = ({ sessionId: nextSessionId }: { sessionId: string }) => {
+      setSessionId(nextSessionId);
+    };
+
+    const handleQueueJoined = () => {
+      setQueueing(true);
+      setError(null);
+    };
+
+    const handleQueueLeft = () => {
+      setQueueing(false);
+    };
+
+    const handleMatchUpdate = (nextMatchView: MatchView) => {
+      setMatchView(nextMatchView);
+      if (isValidModelId(nextMatchView.modelId)) {
+        setSelectedModelId(nextMatchView.modelId);
+      }
+      setQueueing(false);
+      setError(null);
+    };
+
+    const handleMatchError = ({ message }: { message: string }) => {
+      setError(message);
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('session:ready', handleSessionReady);
+    socket.on('queue:joined', handleQueueJoined);
+    socket.on('queue:left', handleQueueLeft);
+    socket.on('match:update', handleMatchUpdate);
+    socket.on('match:error', handleMatchError);
+
+    if (socket.connected && sessionId) {
+      socket.emit('player:resume', { sessionId });
+    }
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('session:ready', handleSessionReady);
+      socket.off('queue:joined', handleQueueJoined);
+      socket.off('queue:left', handleQueueLeft);
+      socket.off('match:update', handleMatchUpdate);
+      socket.off('match:error', handleMatchError);
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!matchView) {
+      setDraft('');
+      setPreviewCategoryId(null);
+      setEditingCategoryId(null);
+      return;
+    }
+
+    if (matchView.phase !== 'category_review' && matchView.phase !== 'battle_path') {
+      setPreviewCategoryId(null);
+    }
+
+    if (matchView.phase !== 'category_setup') {
+      setEditingCategoryId(null);
+      socket.emit('category:typing', { isTyping: false });
+    }
+
+    if (matchView.phase === 'prompt_entry') {
+      setDraft(matchView.promptDraft ?? '');
+      return;
+    }
+
+    setDraft('');
+  }, [matchView?.phase, matchView?.activeCategoryId, matchView?.promptDraft]);
+
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        window.clearTimeout(typingTimeoutRef.current);
+      }
+
+      if (categoryTypingTimeoutRef.current) {
+        window.clearTimeout(categoryTypingTimeoutRef.current);
+      }
+    };
   }, []);
 
-  const saveApiKey = () => {
-    localStorage.setItem('GEMINI_KEY', apiKey);
-    initGemini(apiKey);
-    setScreen('ONBOARDING');
+  const categories = matchView?.categories ?? [];
+  const players = matchView?.players ?? [];
+  const selfId = matchView?.selfId ?? 'player_1';
+  const selfPlayer = players.find((player) => player.id === selfId) ?? null;
+  const nextPlayer = players.find((player) => player.id === matchView?.activePlayer) ?? null;
+  const activeCategory = categories.find((category) => category.id === matchView?.activeCategoryId) ?? null;
+  const previewCategory = categories.find((category) => category.id === previewCategoryId) ?? null;
+  const editingCategory = categories.find((category) => category.id === editingCategoryId) ?? null;
+  const currentResultLogs = activeCategory && matchView?.currentResultLog ? [matchView.currentResultLog] : [];
+
+  useEffect(() => {
+    if (selfPlayer && selfPlayer.color !== profile.color) {
+      setProfile((currentProfile) => ({ ...currentProfile, color: selfPlayer.color }));
+    }
+  }, [profile.color, selfPlayer]);
+
+  const boardHeight = Math.max(500, BOARD_TOP_OFFSET + categories.length * BOARD_STEP + 120);
+  const boardPath = useMemo(() => buildBoardPath(boardHeight), [boardHeight]);
+
+  const lockedPlayerIds = useMemo(() => {
+    if (!matchView) {
+      return [] as PlayerId[];
+    }
+
+    if (matchView.phase === 'category_setup') {
+      return matchView.categorySetupLockedPlayers;
+    }
+
+    if (matchView.phase === 'category_review') {
+      return matchView.reviewLockedPlayers;
+    }
+
+    if (matchView.phase === 'prompt_entry' || matchView.phase === 'resolving') {
+      return matchView.promptLockedPlayers;
+    }
+
+    if (matchView.phase === 'results') {
+      return matchView.resultLockedPlayers;
+    }
+
+    return [] as PlayerId[];
+  }, [matchView]);
+
+  const spinnerPlayerIds = useMemo(() => {
+    if (!matchView) {
+      return [] as PlayerId[];
+    }
+
+    if (matchView.phase === 'battle_path') {
+      return [matchView.activePlayer];
+    }
+
+    if (matchView.phase === 'category_setup') {
+      return matchView.categoryTypingPlayers;
+    }
+
+    if (matchView.phase === 'prompt_entry') {
+      return matchView.typingPlayers;
+    }
+
+    if (matchView.phase === 'resolving') {
+      return players.map((player) => player.id);
+    }
+
+    return [] as PlayerId[];
+  }, [matchView, players]);
+
+  const disconnectedPlayerIds = players.filter((player) => !player.connected).map((player) => player.id);
+
+  const centerLabel = useMemo(() => {
+    if (!matchView) {
+      return 'Online';
+    }
+
+    switch (matchView.phase) {
+      case 'category_setup':
+        return 'Category Forge';
+      case 'category_review':
+        return 'Board Review';
+      case 'battle_path':
+        return 'Pick Category';
+      case 'prompt_entry':
+        return 'Live Round';
+      case 'resolving':
+        return 'Judging';
+      case 'results':
+        return 'Results';
+      case 'win':
+        return 'Crowned';
+      default:
+        return 'Online';
+    }
+  }, [matchView]);
+
+  const openEditor = (category: Category) => {
+    if (!matchView || matchView.phase !== 'category_setup') {
+      return;
+    }
+
+    if (category.ownerId !== selfId || matchView.categorySetupLockedPlayers.includes(selfId)) {
+      return;
+    }
+
+    setEditingCategoryId(category.id);
+    setCategoryNameInput(category.name);
+    setCategoryDescriptionInput(category.description);
   };
 
-  const handleOnboarding = (name: string, color: string) => {
-    const newPlayer: Player = { id: activePlayer, name, color };
-    setPlayers(prev => [...prev, newPlayer]);
-    if (activePlayer === 'player_1') {
-      setActivePlayer('player_2');
-      const nameInputEl = document.getElementById('nameInput') as HTMLInputElement;
-      if (nameInputEl) nameInputEl.value = '';
-    } else {
-      setScreen('CATEGORY_CREATION');
-      setActivePlayer('player_1');
+  const closeEditor = () => {
+    setEditingCategoryId(null);
+    socket.emit('category:typing', { isTyping: false });
+
+    if (categoryTypingTimeoutRef.current) {
+      window.clearTimeout(categoryTypingTimeoutRef.current);
     }
   };
 
-  const openCategoryModal = (cat?: Category) => {
-    if (cat) {
-      setEditingCat(cat);
-      setCatNameInput(cat.name);
-      setCatDescInput(cat.description);
-    } else {
-      setEditingCat(null);
-      setCatNameInput('');
-      setCatDescInput('');
-    }
-    setShowCatModal(true);
-  };
+  const closePreview = () => {
+    setPreviewCategoryId(null);
 
-  const saveCategory = () => {
-    if (!catNameInput || !catDescInput) return;
-    
-    if (editingCat) {
-      setCategories(cats => cats.map(c => c.id === editingCat.id ? { ...c, name: catNameInput, description: catDescInput } : c));
-    } else {
-      setCategories(cats => [...cats, {
-        id: Math.random().toString(),
-        name: catNameInput, 
-        description: catDescInput,
-        createdBy: activePlayer,
-        capturedBy: null,
-        history: [],
-        isTie: false
-      }]);
-    }
-    setShowCatModal(false);
-  };
-
-  const generateAI = async () => {
-    try {
-      const res = await generateAICategory();
-      setCategories(cats => [...cats, {
-        id: Math.random().toString(),
-        name: res.category_name,
-        description: res.category_description,
-        createdBy: 'ai',
-        capturedBy: null,
-        history: [],
-        isTie: false
-      }]);
-    } catch (e) {
-      alert("Failed to generate AI category.");
-      console.error(e);
+    if (matchView && (matchView.phase === 'category_review' || matchView.phase === 'battle_path')) {
+      socket.emit('category:preview', { categoryId: null });
     }
   };
 
-  const startGame = () => {
-    setScreen('BATTLE_PATH');
-    setActivePlayer('player_1');
-  };
+  const openPreview = (categoryId: string) => {
+    setPreviewCategoryId(categoryId);
 
-  const startTurn = (cat: Category) => {
-    if (cat.capturedBy) return;
-    setActiveCategory(cat);
-    setScreen('HANDOFF');
-  };
-
-  const resolveTurn = async () => {
-    setScreen('RESOLVING');
-    if (!activeCategory) return;
-    
-    const isTieBreaker = activeCategory.isTie;
-    const prevLog = isTieBreaker && activeCategory.history.length > 0 
-      ? activeCategory.history[activeCategory.history.length - 1] 
-      : undefined;
-
-    try {
-      const result = await judgeTurn(
-        activeCategory.name, 
-        activeCategory.description, 
-        p1Draft, 
-        p2Draft,
-        isTieBreaker,
-        prevLog?.player1Text,
-        prevLog?.player2Text,
-        prevLog?.judgingLog
-      );
-
-      setJudgingResult(result);
-      
-      const newHistory = [...activeCategory.history, { player1Text: p1Draft, player2Text: p2Draft, judgingLog: result }];
-      
-      setCategories(cats => cats.map(c => {
-        if (c.id === activeCategory.id) {
-          return {
-            ...c,
-            history: newHistory,
-            capturedBy: result.winner_id === 'tie' ? null : result.winner_id,
-            isTie: result.winner_id === 'tie'
-          };
-        }
-        return c;
-      }));
-
-      setScreen('RESULTS_MODAL');
-    } catch (e) {
-      alert("Judging Failed. Check console.");
-      console.error(e);
-      setScreen('BATTLE_PATH');
+    if (matchView && (matchView.phase === 'category_review' || matchView.phase === 'battle_path')) {
+      socket.emit('category:preview', { categoryId });
     }
   };
 
-  const completeTurn = () => {
-    setP1Draft('');
-    setP2Draft('');
-    setActiveCategory(null);
-    setJudgingResult(null);
+  const handleQueue = () => {
+    const trimmedName = profile.name.trim();
 
-    const p1Score = categories.filter(c => c.capturedBy === 'player_1').length;
-    const p2Score = categories.filter(c => c.capturedBy === 'player_2').length;
-
-    if (p1Score >= 3 || p2Score >= 3) {
-      setScreen('WIN_SCREEN');
-    } else {
-      setScreen('BATTLE_PATH');
-      setActivePlayer('player_1');
+    if (!trimmedName) {
+      setError('Choose a username before entering the queue.');
+      return;
     }
+
+    setError(null);
+    socket.connect();
+    socket.emit('player:queue', {
+      sessionId: sessionId || undefined,
+      name: trimmedName,
+      color: profile.color,
+      modelId: selectedModelId,
+    });
+  };
+
+  const handleModelChange = (modelId: string) => {
+    if (!isValidModelId(modelId)) {
+      return;
+    }
+
+    setSelectedModelId(modelId);
+
+    if (matchView) {
+      socket.emit('match:model', { modelId });
+    }
+  };
+
+  const handleLeaveQueue = () => {
+    socket.emit('queue:leave');
+    setQueueing(false);
+  };
+
+  const handleSaveCategory = () => {
+    if (!editingCategoryId) {
+      return;
+    }
+
+    socket.emit('category:update', {
+      categoryId: editingCategoryId,
+      name: categoryNameInput,
+      description: categoryDescriptionInput,
+    });
+    socket.emit('category:typing', { isTyping: false });
+    closeEditor();
+  };
+
+  const handleCategoryTyping = (nextName: string, nextDescription: string) => {
+    const isTyping = nextName.trim().length > 0 || nextDescription.trim().length > 0;
+
+    socket.emit('category:typing', { isTyping });
+
+    if (categoryTypingTimeoutRef.current) {
+      window.clearTimeout(categoryTypingTimeoutRef.current);
+    }
+
+    if (!isTyping) {
+      return;
+    }
+
+    categoryTypingTimeoutRef.current = window.setTimeout(() => {
+      socket.emit('category:typing', { isTyping: false });
+    }, 900);
+  };
+
+  const handleDraftChange = (nextValue: string) => {
+    setDraft(nextValue);
+    socket.emit('prompt:update', { draft: nextValue });
+    socket.emit('prompt:typing', { isTyping: nextValue.trim().length > 0 });
+
+    if (typingTimeoutRef.current) {
+      window.clearTimeout(typingTimeoutRef.current);
+    }
+
+    if (nextValue.trim().length === 0) {
+      return;
+    }
+
+    typingTimeoutRef.current = window.setTimeout(() => {
+      socket.emit('prompt:typing', { isTyping: false });
+    }, 900);
+  };
+
+  const handleLockPrompt = () => {
+    socket.emit('prompt:update', { draft });
+    socket.emit('prompt:typing', { isTyping: false });
+    socket.emit('prompt:lock');
+  };
+
+  const renderSystemBanner = () => {
+    const bannerText = error ?? matchView?.systemMessage ?? (!socketConnected ? 'Trying to reconnect to the match server.' : null);
+
+    if (!bannerText) {
+      return null;
+    }
+
+    return (
+      <div
+        className={cn(
+          'mb-4 flex items-start gap-3 rounded-[1.75rem] border-2 p-4 text-sm font-bold shadow-sm',
+          error ? 'border-red-200 bg-red-50 text-red-600' : 'border-gray-200 bg-white text-gray-600',
+        )}
+      >
+        {error ? <WifiOff className="mt-0.5 h-5 w-5 shrink-0" /> : <Info className="mt-0.5 h-5 w-5 shrink-0 text-duo-purple" />}
+        <span className="leading-relaxed">{bannerText}</span>
+      </div>
+    );
+  };
+
+  const renderCategoryCard = (category: Category, index: number) => {
+    const top = BOARD_TOP_OFFSET + index * BOARD_STEP;
+    const left = BOARD_WIDTH / 2 + Math.sin((top - 20) / 50) * 60;
+    const ownerPlayer = category.ownerId === 'ai' ? null : players.find((player) => player.id === category.ownerId) ?? null;
+    const captor = players.find((player) => player.id === category.capturedBy) ?? null;
+    const previewingPlayers = players.filter((player) => matchView?.previewSelections[player.id] === category.id);
+    const canChooseCategory = matchView?.phase === 'battle_path' && selfId === matchView.activePlayer && !category.capturedBy;
+
+    return (
+      <motion.button
+        key={category.id}
+        type="button"
+        initial={{ scale: 0.94, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ delay: index * 0.05 }}
+        className={cn(
+          'absolute -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border-2 bg-white/95 px-4 py-3 text-left shadow-sm transition-all',
+          previewingPlayers.length === 2 && 'border-duo-purple shadow-[0_0_0_3px_rgba(206,130,255,0.18)]',
+          previewingPlayers.length === 1 && 'border-gray-300',
+          category.capturedBy && 'border-transparent',
+        )}
+        style={{
+          top,
+          left,
+          width: '15rem',
+          backgroundColor: captor ? `${captor.color}14` : undefined,
+        }}
+        onClick={() => openPreview(category.id)}
+      >
+        {previewingPlayers.length > 0 && (
+          <div className="mb-2 flex items-center gap-1">
+            {previewingPlayers.map((player) => (
+              <span key={player.id} className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: player.color }} />
+            ))}
+            <span className="text-[9px] font-black uppercase tracking-[0.18em] text-gray-400">
+              {previewingPlayers.length === 2 ? 'Both Looking' : 'Previewing'}
+            </span>
+          </div>
+        )}
+
+        <div className="flex items-start gap-3">
+          <div
+            className={cn(
+              'flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 text-lg font-black shadow-sm',
+              captor ? 'border-white text-white' : 'border-gray-200 bg-gray-50 text-gray-400',
+            )}
+            style={captor ? { backgroundColor: captor.color } : undefined}
+          >
+            {captor ? <Play className="h-5 w-5 fill-current" /> : index + 1}
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-base font-black text-gray-800">{category.name || 'Empty Category Slot'}</p>
+            <p className="mt-1 line-clamp-2 text-xs font-bold leading-relaxed text-gray-500">
+              {category.description || 'Waiting for a worthy premise.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <span
+            className={cn(
+              'rounded-full px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em]',
+              captor ? 'bg-white/75 text-gray-700' : ownerPlayer ? 'text-white' : 'bg-gray-100 text-gray-500',
+            )}
+            style={ownerPlayer && !captor ? { backgroundColor: ownerPlayer.color } : undefined}
+          >
+            {captor ? `${captor.name} owns it` : ownerLabel(category, players)}
+          </span>
+
+          {matchView?.phase === 'battle_path' && (
+            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">
+              {canChooseCategory ? 'Choose' : category.capturedBy ? 'Captured' : 'Preview'}
+            </span>
+          )}
+        </div>
+      </motion.button>
+    );
+  };
+
+  const renderHomeScreen = () => (
+    <motion.div
+      key="HOME"
+      initial={{ opacity: 0, y: 24 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex min-h-full flex-col justify-center gap-6 py-10"
+    >
+      {onBack && !queueing && (
+        <div className="flex justify-start">
+          <Button variant="ghost" className="w-auto px-4 py-3 text-[10px] tracking-[0.22em]" onClick={onBack}>
+            Back
+          </Button>
+        </div>
+      )}
+
+      <div className="space-y-3 text-center">
+        <p className="text-xs font-black uppercase tracking-[0.24em] text-gray-400">The Overseer Online</p>
+        <h1 className="text-5xl font-black leading-none text-gray-900">Queue For The Throne</h1>
+        <p className="mx-auto max-w-sm text-sm font-bold leading-relaxed text-gray-500">
+          Set your name, claim a color, and enter the online queue. When two players are found, the server builds a live match and keeps both screens in sync.
+        </p>
+      </div>
+
+      {renderSystemBanner()}
+
+      <div className="rounded-[2rem] border-2 border-gray-100 bg-white p-5 shadow-sm">
+        <label className="ml-2 block text-xs font-black uppercase tracking-[0.24em] text-gray-400">Username</label>
+        <input
+          type="text"
+          maxLength={16}
+          value={profile.name}
+          onChange={(event) => setProfile((currentProfile) => ({ ...currentProfile, name: event.target.value }))}
+          placeholder="Uncle Ray"
+          className="mt-2 w-full rounded-2xl border-2 border-gray-200 bg-gray-50 p-4 text-lg font-bold text-gray-800 outline-none transition-all focus:border-duo-blue focus:bg-white"
+        />
+
+        <div className="mt-5">
+          <p className="ml-2 text-xs font-black uppercase tracking-[0.24em] text-gray-400">Color</p>
+          <div className="mt-3 flex flex-wrap justify-center gap-3">
+            {COLORS.map((color) => {
+              const isSelected = profile.color === color;
+              return (
+                <button
+                  key={color}
+                  type="button"
+                  onClick={() => setProfile((currentProfile) => ({ ...currentProfile, color }))}
+                  className={cn(
+                    'relative h-14 w-14 rounded-full border-4 transition-all',
+                    isSelected ? 'scale-110 border-gray-900' : 'border-transparent hover:scale-105',
+                  )}
+                  style={{ backgroundColor: color }}
+                >
+                  {isSelected && <Check className="absolute inset-0 m-auto h-6 w-6 text-white" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <Button onClick={handleQueue} disabled={queueing || profile.name.trim().length === 0}>
+          {queueing ? 'Searching For Opponent' : 'Play Online'}
+        </Button>
+
+        {queueing && (
+          <Button variant="ghost" className="border-2 border-gray-200 bg-white" onClick={handleLeaveQueue}>
+            Leave Queue
+          </Button>
+        )}
+      </div>
+
+      {queueing && (
+        <div className="flex items-center justify-center gap-3 rounded-[1.75rem] border-2 border-gray-100 bg-white px-4 py-4 text-sm font-bold text-gray-500 shadow-sm">
+          <LoaderCircle className="h-5 w-5 animate-spin text-duo-purple" />
+          Waiting for another player to enter the queue.
+        </div>
+      )}
+    </motion.div>
+  );
+
+  const renderCategorySetup = () => (
+    <motion.div key="CATEGORY_SETUP" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col">
+      {renderSystemBanner()}
+
+      <div className="mb-4 shrink-0 text-center">
+        <h2 className="text-3xl font-black text-gray-800">Build The Board</h2>
+        <p className="mt-2 text-sm font-bold text-gray-500">Top two slots belong to player one. Bottom two belong to player two. Lock in to summon the fifth category.</p>
+      </div>
+
+      <div className="space-y-3 pb-6">
+        {categories.map((category) => {
+          const categoryOwner = category.ownerId === 'ai' ? null : players.find((player) => player.id === category.ownerId) ?? null;
+          const isEditable = category.ownerId === selfId && !matchView?.categorySetupLockedPlayers.includes(selfId);
+          const isLockedSlot = category.ownerId !== 'ai' && matchView?.categorySetupLockedPlayers.includes(category.ownerId);
+
+          return (
+            <button
+              key={category.id}
+              type="button"
+              onClick={() => isEditable && openEditor(category)}
+              className={cn(
+                'w-full rounded-[2rem] border-2 bg-white p-5 text-left shadow-sm transition-all',
+                isEditable && 'hover:-translate-y-0.5 hover:shadow-md',
+                category.ownerId === 'ai' && 'border-dashed border-gray-200 bg-gray-50',
+              )}
+              style={categoryOwner ? { borderColor: `${categoryOwner.color}55`, backgroundColor: `${categoryOwner.color}12` } : undefined}
+              disabled={!isEditable}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-gray-400">
+                    {category.ownerId === 'ai' ? 'Overseer Slot' : `${ownerLabel(category, players)} Slot`}
+                  </p>
+                  <h3 className="mt-2 break-words text-xl font-black text-gray-800">
+                    {category.name || (category.ownerId === 'ai' ? 'Awaiting the fifth category' : 'Tap to write a title')}
+                  </h3>
+                  <p className="mt-2 whitespace-pre-wrap break-words text-sm font-semibold leading-relaxed text-gray-500">
+                    {category.description || (category.ownerId === 'ai'
+                      ? 'The AI category appears after both players lock in their two slots.'
+                      : 'Write a short category that can hold a full round.')}
+                  </p>
+                </div>
+
+                {isLockedSlot && (
+                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">
+                    Locked
+                  </span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-auto shrink-0">
+        <Button onClick={() => socket.emit('category:lock')} disabled={matchView?.categorySetupLockedPlayers.includes(selfId)}>
+          {matchView?.categorySetupLockedPlayers.includes(selfId) ? 'Categories Locked' : 'Lock In Categories'}
+        </Button>
+      </div>
+    </motion.div>
+  );
+
+  const renderBoard = (phase: 'category_review' | 'battle_path') => (
+    <motion.div key={phase} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col">
+      {renderSystemBanner()}
+
+      <div className="shrink-0 pb-4 text-center">
+        <h2 className="text-3xl font-black text-gray-800">{phase === 'category_review' ? 'Review The Board' : 'Pick A Category'}</h2>
+        <p className="mt-2 text-sm font-bold text-gray-500">
+          {phase === 'category_review'
+            ? 'Preview any category. When both players are satisfied, lock in and begin the match.'
+            : selfId === matchView?.activePlayer
+              ? 'Choose an uncaptured category. Both players will be pulled into the same writing screen.'
+              : `${nextPlayer?.name ?? 'Your opponent'} is choosing the next category.`}
+        </p>
+      </div>
+
+      <div className="pb-8">
+        <div className="relative mx-auto w-full max-w-[20rem]" style={{ height: boardHeight }}>
+          <svg className="pointer-events-none absolute left-0 top-0 h-full w-full text-gray-300" viewBox={`0 0 ${BOARD_WIDTH} ${boardHeight}`} preserveAspectRatio="none">
+            <path d={boardPath} fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="10 10" />
+          </svg>
+
+          {categories.map((category, index) => renderCategoryCard(category, index))}
+        </div>
+      </div>
+
+      {phase === 'category_review' && (
+        <div className="shrink-0 pt-4">
+          <Button onClick={() => socket.emit('review:lock')} disabled={matchView?.reviewLockedPlayers.includes(selfId)}>
+            {matchView?.reviewLockedPlayers.includes(selfId) ? 'Ready Locked' : 'Start Match'}
+          </Button>
+        </div>
+      )}
+    </motion.div>
+  );
+
+  const renderPromptEntry = () => {
+    const selfLocked = matchView?.promptLockedPlayers.includes(selfId) ?? false;
+
+    if (!activeCategory) {
+      return null;
+    }
+
+    return (
+      <motion.div key="PROMPT_ENTRY" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex min-h-full flex-col">
+        {renderSystemBanner()}
+
+        <div className="rounded-[2rem] border-2 border-gray-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-gray-400">Live Category</p>
+          <h3 className="mt-2 break-words text-2xl font-black text-gray-800">{activeCategory.name}</h3>
+          <p className="mt-3 whitespace-pre-wrap break-words text-sm font-semibold leading-relaxed text-gray-500">{activeCategory.description}</p>
+          {activeCategory.isTie && (
+            <div className="mt-4 rounded-[1.25rem] bg-duo-red/10 px-4 py-3 text-sm font-bold text-duo-red">
+              Tie-breaker round. Build on the last exchange and finish the capture.
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4 flex-1 rounded-[2rem] border-2 border-gray-200 bg-white shadow-inner">
+          <textarea
+            className="h-full min-h-[18rem] w-full resize-none rounded-[2rem] bg-transparent p-5 text-lg font-bold text-gray-800 outline-none"
+            placeholder="Weave your lies..."
+            value={draft}
+            onChange={(event) => handleDraftChange(event.target.value)}
+            disabled={selfLocked}
+            spellCheck
+          />
+        </div>
+
+        <div className="mt-4 shrink-0">
+          <Button onClick={handleLockPrompt} disabled={selfLocked || draft.trim().length === 0}>
+            {selfLocked ? 'Locked In' : 'Lock In Prompt'}
+          </Button>
+        </div>
+      </motion.div>
+    );
+  };
+
+  const renderResolving = () => (
+    <motion.div key="RESOLVING" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col items-center justify-center gap-6 text-center">
+      <div className="relative h-24 w-24">
+        <div className="absolute inset-0 rounded-full border-8 border-duo-purple/30" />
+        <div className="absolute inset-0 rounded-full border-8 border-duo-purple border-t-transparent animate-spin" />
+      </div>
+      <div className="space-y-2">
+        <h2 className="text-3xl font-black text-gray-800">The Overseer Judges...</h2>
+        <p className="text-sm font-bold text-gray-500">Both prompts are locked. The server is resolving the round now.</p>
+      </div>
+    </motion.div>
+  );
+
+  const renderResults = () => {
+    if (!activeCategory || currentResultLogs.length === 0) {
+      return null;
+    }
+
+    return (
+      <motion.div key="RESULTS" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col overflow-hidden">
+        {renderSystemBanner()}
+
+        <div className="shrink-0 pb-4 text-center">
+          <h2 className="text-3xl font-black text-gray-800">Judgment</h2>
+          <p className="mt-2 text-sm font-bold text-gray-500">Review the ruling, then both players continue.</p>
+        </div>
+
+        <div className="duo-scrollbar flex-1 overflow-y-auto pb-6">
+          <JudgingLogPanel className="w-full" category={activeCategory} logs={currentResultLogs} players={players} />
+        </div>
+
+        <div className="shrink-0 border-t-2 border-gray-100 bg-duo-gray/90 pt-4">
+          <Button onClick={() => socket.emit('results:continue')} disabled={matchView?.resultLockedPlayers.includes(selfId)}>
+            {matchView?.resultLockedPlayers.includes(selfId) ? 'Continue Locked' : 'Continue'}
+          </Button>
+        </div>
+      </motion.div>
+    );
+  };
+
+  const renderWinScreen = () => {
+    const winningPlayer = players.find((player) => player.id === matchView?.winnerId) ?? null;
+
+    return (
+      <motion.div key="WIN" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col overflow-hidden">
+        {renderSystemBanner()}
+
+        <div className="mb-6 shrink-0 text-center">
+          <Trophy className="mx-auto h-16 w-16 text-duo-yellow" />
+          <h1 className="mt-2 text-4xl font-black text-gray-800">Game Over</h1>
+          <p className="mt-2 text-sm font-bold text-gray-500">
+            {winningPlayer ? `${winningPlayer.name} takes the crown.` : 'The match is over.'}
+          </p>
+        </div>
+
+        <div className="duo-scrollbar flex-1 overflow-y-auto space-y-8 pb-10">
+          {categories.map((category, index) => (
+            <section key={category.id} className="space-y-3">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-xs font-black uppercase tracking-[0.22em] text-gray-400">Conquest {index + 1}</span>
+                {category.capturedBy && (
+                  <div
+                    className="h-9 w-9 rounded-full border-2 border-white shadow-md"
+                    style={{ backgroundColor: players.find((player) => player.id === category.capturedBy)?.color }}
+                  />
+                )}
+              </div>
+              <JudgingLogPanel className="w-full" category={category} logs={category.history} players={players} />
+            </section>
+          ))}
+        </div>
+      </motion.div>
+    );
   };
 
   return (
-    <div className="w-full h-screen max-w-md mx-auto bg-duo-gray relative flex flex-col overflow-hidden shadow-2xl md:rounded-3xl md:h-[95vh] md:mt-[2.5vh]">
-      {(screen !== 'API_SETUP' && screen !== 'ONBOARDING' && screen !== 'HANDOFF') && (
-        <Header players={players} activePlayerId={activePlayer} />
+    <div className="relative mx-auto flex h-screen w-full max-w-md flex-col overflow-x-hidden bg-duo-gray shadow-2xl md:mt-[2.5vh] md:h-[95vh] md:rounded-3xl">
+      {matchView && (
+        <Header
+          players={players}
+          spinnerPlayerIds={spinnerPlayerIds}
+          lockedPlayerIds={lockedPlayerIds}
+          disconnectedPlayerIds={disconnectedPlayerIds}
+          centerLabel={centerLabel}
+          modelOptions={MODEL_OPTIONS}
+          selectedModelId={selectedModelId}
+          onModelChange={handleModelChange}
+        />
       )}
 
-      <main className="flex-1 overflow-y-auto scrollbar-hide pt-20 pb-6 px-6 z-10 relative">
-        <AnimatePresence mode='wait'>
-          
-          {screen === 'API_SETUP' && (
-            <motion.div key="API_SETUP" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="flex flex-col h-full justify-center text-center gap-6">
-              <Settings className="w-16 h-16 mx-auto text-duo-gray-dark" />
-              <h1 className="text-3xl font-black text-gray-800">The Overseer</h1>
-              <p className="text-gray-500 font-bold">Enter Gemini API Key to awake the Overseer.</p>
-              <input 
-                type="password"
-                className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-bold text-center outline-none focus:border-duo-blue"
-                value={apiKey}
-                onChange={e => setApiKey(e.target.value)}
-                placeholder="AIzaSy..."
-              />
-              <Button onClick={saveApiKey} disabled={!apiKey}>Awaken</Button>
-            </motion.div>
-          )}
-
-          {screen === 'ONBOARDING' && (
-            <motion.div key={`ONBOARDING_${activePlayer}`} initial={{x:100, opacity:0}} animate={{x:0, opacity:1}} exit={{x:-100, opacity:0}} className="flex flex-col h-full justify-center text-center gap-6">
-              <h2 className="text-2xl font-black text-gray-800 uppercase tracking-widest">Hand phone to</h2>
-              <h1 className="text-5xl font-black text-duo-blue">{activePlayer === 'player_1' ? 'Player 1' : 'Player 2'}</h1>
-              <input 
-                id="nameInput"
-                type="text"
-                maxLength={12}
-                className="w-full bg-white border-2 border-gray-200 rounded-2xl p-4 font-bold text-center outline-none focus:border-duo-blue mt-8 text-2xl"
-                placeholder="Enter Name"
-              />
-              <div className="flex justify-center gap-3 mt-4 flex-wrap">
-                {COLORS.map(c => (
-                  <button key={c} onClick={() => handleOnboarding((document.getElementById('nameInput') as HTMLInputElement).value || activePlayer, c)} className="w-12 h-12 rounded-full border-4 border-transparent hover:scale-110 transition-all active:scale-95" style={{backgroundColor: c}} />
-                ))}
+      {matchView?.phase === 'battle_path' && nextPlayer && (
+        <div className="fixed top-[4.6rem] z-30 w-full max-w-md px-6">
+          <div className="mx-auto flex justify-center">
+            <div className="relative">
+              <div className="absolute inset-1 rounded-full bg-[#ffd54a]/45 blur-xl" />
+              <div className="relative flex items-center gap-2 rounded-full border border-[#fff0a6] bg-white/92 px-4 py-2 shadow-sm">
+                <span className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7a4b00]">Next:</span>
+                <div className="h-7 w-7 rounded-full border-2 border-white shadow-sm" style={{ backgroundColor: nextPlayer.color }} />
+                <span className="text-sm font-black text-gray-900">{nextPlayer.name}</span>
               </div>
-            </motion.div>
-          )}
+            </div>
+          </div>
+        </div>
+      )}
 
-          {screen === 'CATEGORY_CREATION' && (
-            <motion.div key="CATEGORY_CREATION" initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full gap-4 relative">
-              <h2 className="text-2xl font-black text-center mb-2 text-gray-800">Create Categories</h2>
-              <div className="flex-1 overflow-y-auto space-y-4 pb-4">
-                {categories.map(c => (
-                  <div key={c.id} onClick={() => openCategoryModal(c)} className="bg-white rounded-2xl p-4 border-b-4 border-gray-200 cursor-pointer active:translate-y-1 active:border-b-0 transition-all shadow-sm">
-                    <h3 className="font-black text-lg text-gray-800">{c.name}</h3>
-                    <p className="text-gray-500 font-semibold text-sm truncate">{c.description}</p>
-                  </div>
-                ))}
-              </div>
-              
-              <div className="mt-auto space-y-3 shrink-0">
-                <Button variant="ghost" className="flex items-center justify-center gap-2" onClick={() => openCategoryModal()}>
-                  <Plus className="w-6 h-6" /> Add Custom
-                </Button>
-                {categories.filter(c => c.createdBy === 'ai').length === 0 && (
-                  <Button variant="secondary" onClick={generateAI}>Generate AI Category</Button>
-                )}
-                {categories.length >= 5 && (
-                  <Button variant="primary" onClick={startGame}>Start Game</Button>
-                )}
-              </div>
-            </motion.div>
-          )}
-
-          {screen === 'BATTLE_PATH' && (
-             <motion.div key="BATTLE_PATH" initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full relative py-10">
-               <div className="absolute inset-0 flex justify-center pointer-events-none">
-                  <svg width="4" height="100%" className="text-gray-300">
-                    <line x1="2" y1="0" x2="2" y2="100%" stroke="currentColor" strokeWidth="4" strokeDasharray="10 10"/>
-                  </svg>
-               </div>
-               <div className="flex flex-col justify-between h-full relative z-10">
-                 {categories.map((c, i) => {
-                    const offset = Math.sin(i * 1.2) * 50;
-                    const captor = players.find(p => p.id === c.capturedBy);
-                    return (
-                      <motion.div 
-                        key={c.id} 
-                        initial={{ scale: 0 }} 
-                        animate={{ scale: 1 }} 
-                        transition={{ delay: i * 0.1 }}
-                        className="flex justify-center relative cursor-pointer group"
-                        style={{ transform: `translateX(${offset}px)` }}
-                        onClick={() => startTurn(c)}
-                      >
-                         <div className={cn(
-                           "w-24 h-24 rounded-full border-b-8 flex items-center justify-center transition-all",
-                           c.capturedBy ? "border-b-0 translate-y-2" : "active:translate-y-2 active:border-b-0 border-gray-300 bg-white hover:bg-gray-50"
-                         )}
-                         style={captor ? { backgroundColor: captor.color, boxShadow: `0 0 30px ${captor.color}90`, border: `4px solid white` } : undefined}>
-                           {captor ? <Play className="text-white w-10 h-10 fill-current" /> : <span className="font-black text-gray-400 text-3xl">{i+1}</span>}
-                         </div>
-                         {c.isTie && (
-                           <div className="absolute -top-2 -right-2 bg-duo-red text-white text-xs font-black px-2 py-1 rounded-full animate-bounce shadow-md">TIE!</div>
-                         )}
-                         <div className="absolute top-1/2 left-full ml-4 -translate-y-1/2 bg-white px-3 py-2 rounded-xl shadow-sm border border-gray-100 whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-                           <p className="font-bold text-sm text-gray-700">{c.name}</p>
-                         </div>
-                      </motion.div>
-                    );
-                 })}
-               </div>
-             </motion.div>
-          )}
-
-          {screen === 'HANDOFF' && (
-            <motion.div key="HANDOFF" initial={{scale:0.8, opacity:0}} animate={{scale:1, opacity:1}} className="flex flex-col h-full justify-center items-center text-center gap-8 px-6 absolute inset-0 bg-white z-50">
-               <h1 className="text-4xl font-black text-gray-800">Hand phone to</h1>
-               <h2 className="text-6xl font-black" style={{color: players.find(p=>p.id === activePlayer)?.color}}>
-                 {players.find(p=>p.id === activePlayer)?.name}
-               </h2>
-               
-               {!hasSeenIntro[activePlayer] && (
-                 <div className="bg-gray-100 p-6 rounded-3xl mt-4 border-2 border-gray-200">
-                   <Info className="w-8 h-8 text-duo-purple mx-auto mb-2" />
-                   <p className="font-bold text-gray-600 italic text-sm">{introText}</p>
-                 </div>
-               )}
-
-               <Button className="mt-8" onClick={() => {
-                 setHasSeenIntro(prev => ({...prev, [activePlayer]: true}));
-                 setScreen('PROMPT_ENTRY');
-               }}>Ready</Button>
-            </motion.div>
-          )}
-
-          {screen === 'PROMPT_ENTRY' && activeCategory && (
-            <motion.div key="PROMPT_ENTRY" initial={{y:50, opacity:0}} animate={{y:0, opacity:1}} className="flex flex-col h-full relative pt-2">
-               <div className="bg-white rounded-3xl p-5 mb-4 shadow-sm border-2 border-gray-100">
-                  <h3 className="font-black text-xl mb-1 text-gray-800">{activeCategory.name}</h3>
-                  <p className="text-gray-500 font-semibold text-sm">{activeCategory.description}</p>
-                  {activeCategory.isTie && (
-                    <div className="mt-3 bg-duo-red/10 text-duo-red p-3 rounded-xl font-bold text-sm">
-                      Follow-up Battle! The Overseer demands more. Build upon your last prompt.
-                    </div>
-                  )}
-               </div>
-               <textarea 
-                  className="flex-1 w-full bg-white rounded-3xl border-2 border-gray-200 p-5 font-bold text-lg outline-none focus:border-duo-blue resize-none mb-4 shadow-inner"
-                  placeholder="Weave your lies..."
-                  value={activePlayer === 'player_1' ? p1Draft : p2Draft}
-                  onChange={e => activePlayer === 'player_1' ? setP1Draft(e.target.value) : setP2Draft(e.target.value)}
-                  spellCheck
-               />
-               <div className="flex gap-3 shrink-0">
-                 <Button variant="ghost" onClick={() => setScreen('BATTLE_PATH')}>Back</Button>
-                 <Button onClick={() => {
-                   if (activePlayer === 'player_1') {
-                     setActivePlayer('player_2');
-                     setScreen('HANDOFF');
-                   } else {
-                     resolveTurn();
-                   }
-                 }}>Done</Button>
-               </div>
-            </motion.div>
-          )}
-
-          {screen === 'RESOLVING' && (
-            <motion.div key="RESOLVING" initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full justify-center items-center text-center gap-6">
-               <div className="w-24 h-24 border-8 border-duo-purple border-t-transparent rounded-full animate-spin"></div>
-               <h2 className="text-3xl font-black text-gray-800 animate-pulse">The Overseer Judges...</h2>
-            </motion.div>
-          )}
-
-          {screen === 'RESULTS_MODAL' && judgingResult && (
-             <motion.div key="RESULTS_MODAL" initial={{scale:0.9, opacity:0}} animate={{scale:1, opacity:1}} className="flex flex-col h-full overflow-y-auto scrollbar-hide pb-10">
-                <h2 className="text-3xl font-black text-center mb-6 text-gray-800">Judgment</h2>
-                
-                <div className="space-y-4 mb-6">
-                  <div className="bg-white p-5 rounded-3xl shadow-sm border-l-8" style={{borderColor: players[0]?.color}}>
-                    <p className="font-bold text-sm text-gray-400 mb-2">{players[0]?.name}</p>
-                    <p className="font-bold text-gray-800">{p1Draft}</p>
-                  </div>
-                  <div className="bg-white p-5 rounded-3xl shadow-sm border-l-8" style={{borderColor: players[1]?.color}}>
-                    <p className="font-bold text-sm text-gray-400 mb-2">{players[1]?.name}</p>
-                    <p className="font-bold text-gray-800">{p2Draft}</p>
-                  </div>
-                </div>
-
-                <div className="bg-gray-800 rounded-3xl p-6 shadow-xl relative overflow-hidden mb-6">
-                   <div className="absolute top-0 left-0 w-full h-2 bg-duo-purple"></div>
-                   <h3 className="font-black text-duo-purple mb-4 text-xl">The Overseer Speaks</h3>
-                   <div className="space-y-4">
-                     <p className="text-white font-bold leading-relaxed">{judgingResult.player_1_feedback}</p>
-                     <p className="text-white font-bold leading-relaxed">{judgingResult.player_2_feedback}</p>
-                     <p className="text-duo-yellow font-black text-xl mt-6">{judgingResult.verdict_sentence}</p>
-                   </div>
-                </div>
-
-                <Button variant="primary" onClick={completeTurn}>Continue</Button>
-             </motion.div>
-          )}
-
-          {screen === 'WIN_SCREEN' && (
-            <motion.div key="WIN_SCREEN" initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full relative">
-              <div className="text-center mb-6 shrink-0">
-                <Trophy className="w-16 h-16 text-duo-yellow mx-auto mb-2" />
-                <h1 className="text-4xl font-black text-gray-800">Game Over</h1>
-                <p className="text-gray-500 font-bold mt-2">The realm has a new King.</p>
-              </div>
-
-              <div className="flex-1 overflow-y-auto space-y-8 scrollbar-hide pb-20">
-                {categories.map((cat, i) => (
-                  <div key={cat.id} className="bg-white rounded-3xl p-5 shadow-sm border-2 border-gray-100">
-                    <div className="flex justify-between items-center mb-4 pb-4 border-b-2 border-gray-100">
-                      <div>
-                        <span className="text-xs font-black text-gray-400 uppercase tracking-widest">Category {i + 1}</span>
-                        <h3 className="font-black text-xl text-gray-800 leading-tight">{cat.name}</h3>
-                      </div>
-                      {cat.capturedBy && (
-                        <div className="w-8 h-8 rounded-full border-2 border-white shadow-md" style={{ backgroundColor: players.find(p => p.id === cat.capturedBy)?.color }} />
-                      )}
-                    </div>
-                    
-                    <div className="space-y-6">
-                      {cat.history.map((log, hIndex) => (
-                        <div key={hIndex} className="space-y-3">
-                          {cat.history.length > 1 && <div className="text-center text-xs font-bold text-gray-400 uppercase">Round {hIndex + 1}</div>}
-                          
-                          <div className="bg-gray-50 p-3 rounded-2xl border-l-4" style={{borderColor: players[0]?.color}}>
-                            <span className="text-xs font-black text-gray-400 block mb-1">{players[0]?.name}</span>
-                            <p className="font-bold text-sm text-gray-700">{log.player1Text}</p>
-                          </div>
-                          
-                          <div className="bg-gray-50 p-3 rounded-2xl border-l-4" style={{borderColor: players[1]?.color}}>
-                            <span className="text-xs font-black text-gray-400 block mb-1">{players[1]?.name}</span>
-                            <p className="font-bold text-sm text-gray-700">{log.player2Text}</p>
-                          </div>
-                          
-                          <div className="bg-duo-purple/10 p-4 rounded-2xl">
-                            <span className="text-xs font-black text-duo-purple uppercase block mb-2">Overseer's Verdict</span>
-                            <p className="font-bold text-sm text-gray-800">{log.judgingLog.verdict_sentence}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-duo-gray via-duo-gray to-transparent pb-6 pt-10">
-                <Button variant="ghost" className="bg-white border-2 border-gray-200" onClick={() => setScreen('BATTLE_PATH')}>
-                  View Board
-                </Button>
-              </div>
-            </motion.div>
-          )}
-
+      <main className={cn('relative z-10 flex-1 overflow-y-auto px-6 pb-6', matchView ? (matchView.phase === 'battle_path' ? 'pt-32' : 'pt-20') : 'pt-10')}>
+        <AnimatePresence mode="wait">
+          {!matchView && renderHomeScreen()}
+          {matchView?.phase === 'category_setup' && renderCategorySetup()}
+          {matchView?.phase === 'category_review' && renderBoard('category_review')}
+          {matchView?.phase === 'battle_path' && renderBoard('battle_path')}
+          {matchView?.phase === 'prompt_entry' && renderPromptEntry()}
+          {matchView?.phase === 'resolving' && renderResolving()}
+          {matchView?.phase === 'results' && renderResults()}
+          {matchView?.phase === 'win' && renderWinScreen()}
         </AnimatePresence>
       </main>
 
-      {/* Category Creation / Edit Modal */}
-      <AnimatePresence>
-        {showCatModal && (
-          <motion.div 
-            initial={{opacity: 0}} 
-            animate={{opacity: 1}} 
-            exit={{opacity: 0}} 
-            className="absolute inset-0 z-50 flex items-center justify-center p-6 bg-gray-900/40 backdrop-blur-sm"
+      {previewCategory && matchView && (matchView.phase === 'category_review' || matchView.phase === 'battle_path') && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-gray-900/40 px-6 py-6 backdrop-blur-sm"
+        >
+          <motion.div
+            initial={{ scale: 0.94, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.94, y: 20 }}
+            className="mx-auto flex max-h-[calc(100vh-3rem)] w-full max-w-sm flex-col overflow-hidden rounded-[2rem] border-2 border-white bg-white shadow-2xl"
           >
-            <motion.div 
-              initial={{scale: 0.9, y: 20}} 
-              animate={{scale: 1, y: 0}} 
-              exit={{scale: 0.9, y: 20}} 
-              className="bg-white rounded-3xl w-full max-w-sm flex flex-col overflow-hidden shadow-2xl border-2 border-white"
-            >
-              <div className="flex justify-between items-center p-4 border-b-2 border-gray-100 bg-gray-50">
-                <h3 className="font-black text-xl text-gray-800">{editingCat ? 'Edit Category' : 'New Category'}</h3>
-                <button onClick={() => setShowCatModal(false)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded-full transition-all">
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-              
-              <div className="p-5 flex flex-col gap-4">
-                <div>
-                  <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-2 mb-1 block">Category Name</label>
-                  <input 
-                    type="text" 
-                    value={catNameInput}
-                    onChange={(e) => setCatNameInput(e.target.value)}
-                    className="w-full bg-gray-50 border-2 border-gray-200 rounded-2xl p-4 font-bold outline-none focus:border-duo-blue focus:bg-white transition-all text-gray-800"
-                    placeholder="e.g. The Infinite Loop"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-black text-gray-400 uppercase tracking-widest ml-2 mb-1 block">Description</label>
-                  <textarea 
-                    value={catDescInput}
-                    onChange={(e) => setCatDescInput(e.target.value)}
-                    className="w-full bg-gray-50 border-2 border-gray-200 rounded-2xl p-4 font-bold outline-none focus:border-duo-blue focus:bg-white transition-all resize-none h-32 text-gray-800"
-                    placeholder="Set the scene..."
-                  />
-                </div>
+            <div className="flex items-center justify-between border-b-2 border-gray-100 bg-gray-50 px-4 py-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-gray-400">Preview</p>
+                <h3 className="mt-1 truncate text-xl font-black text-gray-800">{previewCategory.name}</h3>
               </div>
 
-              <div className="p-5 pt-0">
-                <Button variant="primary" onClick={saveCategory} className="flex items-center justify-center gap-2">
-                  <Check className="w-6 h-6" /> Save
-                </Button>
+              <button onClick={closePreview} className="rounded-full p-2 text-gray-400 transition-all hover:bg-gray-200 hover:text-gray-600">
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <div className="duo-scrollbar flex-1 space-y-4 overflow-y-auto p-5">
+              <div className="rounded-[1.75rem] border-2 border-gray-100 bg-white p-5 shadow-sm">
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-gray-400">Description</p>
+                <p className="mt-3 whitespace-pre-wrap break-words font-bold leading-relaxed text-gray-700">{previewCategory.description}</p>
               </div>
-            </motion.div>
+            </div>
+
+            <div className="flex shrink-0 gap-3 border-t-2 border-gray-100 bg-white px-5 py-5">
+              <Button variant="ghost" className="border-2 border-gray-200 bg-white" onClick={closePreview}>
+                Back
+              </Button>
+              {matchView.phase === 'battle_path' && selfId === matchView.activePlayer && !previewCategory.capturedBy ? (
+                <Button
+                  onClick={() => {
+                    socket.emit('battle:select', { categoryId: previewCategory.id });
+                    setPreviewCategoryId(null);
+                  }}
+                >
+                  Choose Category
+                </Button>
+              ) : (
+                <Button variant="ghost" className="border-2 border-gray-200 bg-white" onClick={closePreview}>
+                  Close
+                </Button>
+              )}
+            </div>
           </motion.div>
-        )}
-      </AnimatePresence>
+        </motion.div>
+      )}
+
+      {editingCategory && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-6 backdrop-blur-sm"
+        >
+          <motion.div
+            initial={{ scale: 0.94, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.94, y: 20 }}
+            className="flex w-full max-w-sm flex-col overflow-hidden rounded-[2rem] border-2 border-white bg-white shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b-2 border-gray-100 bg-gray-50 px-4 py-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-gray-400">Edit Slot</p>
+                <h3 className="mt-1 text-xl font-black text-gray-800">{ownerLabel(editingCategory, players)}</h3>
+              </div>
+              <button onClick={closeEditor} className="rounded-full p-2 text-gray-400 transition-all hover:bg-gray-200 hover:text-gray-600">
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-5">
+              <div>
+                <label className="ml-2 block text-xs font-black uppercase tracking-[0.22em] text-gray-400">Category Name</label>
+                <input
+                  type="text"
+                  value={categoryNameInput}
+                  onChange={(event) => {
+                    const nextName = event.target.value;
+                    setCategoryNameInput(nextName);
+                    handleCategoryTyping(nextName, categoryDescriptionInput);
+                  }}
+                  className="mt-2 w-full rounded-2xl border-2 border-gray-200 bg-gray-50 p-4 font-bold text-gray-800 outline-none transition-all focus:border-duo-blue focus:bg-white"
+                  placeholder="e.g. The Infinite Loop"
+                />
+              </div>
+
+              <div>
+                <label className="ml-2 block text-xs font-black uppercase tracking-[0.22em] text-gray-400">Description</label>
+                <textarea
+                  value={categoryDescriptionInput}
+                  onChange={(event) => {
+                    const nextDescription = event.target.value;
+                    setCategoryDescriptionInput(nextDescription);
+                    handleCategoryTyping(categoryNameInput, nextDescription);
+                  }}
+                  className="h-32 w-full resize-none rounded-2xl border-2 border-gray-200 bg-gray-50 p-4 font-bold text-gray-800 outline-none transition-all focus:border-duo-blue focus:bg-white"
+                  placeholder="Set the scene..."
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 border-t-2 border-gray-100 px-5 py-5">
+              <Button variant="ghost" className="border-2 border-gray-200 bg-white" onClick={closeEditor}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveCategory} disabled={categoryNameInput.trim().length === 0 || categoryDescriptionInput.trim().length === 0}>
+                Save Slot
+              </Button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
     </div>
   );
 }

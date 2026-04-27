@@ -1,0 +1,376 @@
+import { GoogleGenAI, Type } from '@google/genai';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { DEFAULT_MODEL_ID } from '../shared/modelOptions.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = path.resolve(__dirname, '..');
+const PROMPTS_DIR = path.join(ROOT_DIR, 'public', 'prompts');
+
+const categorySchema = {
+  type: Type.OBJECT,
+  properties: {
+    category_name: { type: Type.STRING },
+    category_description: { type: Type.STRING },
+  },
+  required: ['category_name', 'category_description'],
+};
+
+const rubricScoreSchema = {
+  type: Type.OBJECT,
+  properties: {
+    wit: { type: Type.INTEGER },
+    creativity: { type: Type.INTEGER },
+    adherence_to_category: { type: Type.INTEGER },
+    bonus_for_media_politics_references: { type: Type.INTEGER },
+    effort: { type: Type.INTEGER },
+    elegance_of_prose: { type: Type.INTEGER },
+    impressiveness: { type: Type.INTEGER },
+  },
+  required: [
+    'wit',
+    'creativity',
+    'adherence_to_category',
+    'bonus_for_media_politics_references',
+    'effort',
+    'elegance_of_prose',
+    'impressiveness',
+  ],
+};
+
+const judgingSchema = {
+  type: Type.OBJECT,
+  properties: {
+    wit: { type: Type.STRING },
+    creativity: { type: Type.STRING },
+    adherence_to_category: { type: Type.STRING },
+    bonus_for_media_politics_references: { type: Type.STRING },
+    effort: { type: Type.STRING },
+    elegance_of_prose: { type: Type.STRING },
+    impressiveness: { type: Type.STRING },
+    player_1_scores: rubricScoreSchema,
+    player_2_scores: rubricScoreSchema,
+    player_1_feedback: { type: Type.STRING },
+    player_2_feedback: { type: Type.STRING },
+    verdict_sentence: { type: Type.STRING },
+    winner_id: { type: Type.STRING, enum: ['player_1', 'player_2', 'tie'] },
+  },
+  required: [
+    'wit',
+    'creativity',
+    'adherence_to_category',
+    'bonus_for_media_politics_references',
+    'effort',
+    'elegance_of_prose',
+    'impressiveness',
+    'player_1_scores',
+    'player_2_scores',
+    'player_1_feedback',
+    'player_2_feedback',
+    'verdict_sentence',
+    'winner_id',
+  ],
+};
+
+const defaultDescriptionPhrases = [
+  'a rumor with elbows',
+  'a smell that seems intentional',
+  'a problem nobody priced correctly',
+];
+
+let genAI = null;
+
+const getClient = () => {
+  if (!genAI) {
+    const apiKey = process.env.VERTEX_API_KEY?.trim();
+
+    if (!apiKey) {
+      throw new Error('Missing VERTEX_API_KEY. Add it to the server environment before starting multiplayer.');
+    }
+
+    genAI = new GoogleGenAI({
+      apiKey,
+      vertexai: true,
+      apiVersion: 'v1',
+    });
+  }
+
+  return genAI;
+};
+
+const getVertexStatus = (error) =>
+  typeof error === 'object' && error && 'status' in error && typeof error.status === 'number'
+    ? error.status
+    : undefined;
+
+const sleep = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs));
+
+const isRetryableVertexError = (error) => {
+  const status = getVertexStatus(error);
+
+  if (status === 429 || status === 503 || status === 504) {
+    return true;
+  }
+
+  return error instanceof Error && /network|fetch failed|failed to fetch/i.test(error.message);
+};
+
+const isInvalidJsonError = (error) => error instanceof Error && /invalid JSON/i.test(error.message);
+
+const withRetry = async (run, maxRetries) => {
+  let attempt = 0;
+
+  while (true) {
+    try {
+      return await run();
+    } catch (error) {
+      if (attempt >= maxRetries || !isRetryableVertexError(error)) {
+        throw error;
+      }
+
+      const baseDelay = 600 * 2 ** attempt;
+      const jitter = Math.floor(Math.random() * 250);
+      await sleep(baseDelay + jitter);
+      attempt += 1;
+    }
+  }
+};
+
+const withTimeout = async (promise, timeoutMs, action) => {
+  let timeoutId;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`__VERTEX_TIMEOUT__:${action}`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
+const formatVertexError = (error, action) => {
+  if (error instanceof Error && error.message.startsWith('__VERTEX_TIMEOUT__')) {
+    return new Error(`The Overseer took too long to ${action}. Please try again.`);
+  }
+
+  const status = getVertexStatus(error);
+
+  if (status === 404) {
+    return new Error(`Vertex AI could not find the requested resource while trying to ${action} (404).`);
+  }
+
+  if (status === 429) {
+    return new Error(`Vertex AI rate-limited the request while trying to ${action} (429). Please wait a moment and retry.`);
+  }
+
+  if (status === 503 || status === 504) {
+    return new Error(`Vertex AI is temporarily unavailable while trying to ${action} (${status}). Please retry shortly.`);
+  }
+
+  if (status && status >= 500) {
+    return new Error(`Vertex AI hit a server error while trying to ${action} (${status}).`);
+  }
+
+  if (status && status >= 400) {
+    return new Error(`Vertex AI rejected the request while trying to ${action} (${status}).`);
+  }
+
+  if (error instanceof Error) {
+    return new Error(error.message);
+  }
+
+  return new Error(`Vertex AI failed to ${action}.`);
+};
+
+const parseJsonResponse = (text, action) => {
+  if (!text) {
+    throw new Error(`Vertex AI returned an empty response while trying to ${action}.`);
+  }
+
+  const normalizedText = text
+    .trim()
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
+
+  try {
+    return JSON.parse(normalizedText);
+  } catch {
+    const firstBraceIndex = normalizedText.indexOf('{');
+    const lastBraceIndex = normalizedText.lastIndexOf('}');
+
+    if (firstBraceIndex !== -1 && lastBraceIndex > firstBraceIndex) {
+      try {
+        return JSON.parse(normalizedText.slice(firstBraceIndex, lastBraceIndex + 1));
+      } catch {
+        throw new Error(`Vertex AI returned invalid JSON while trying to ${action}.`);
+      }
+    }
+
+    throw new Error(`Vertex AI returned invalid JSON while trying to ${action}.`);
+  }
+};
+
+const requestStructuredJson = async ({
+  action,
+  modelId = DEFAULT_MODEL_ID,
+  prompt,
+  schema,
+  temperature,
+  maxOutputTokens,
+  timeoutMs,
+  repairTemperature = 0.1,
+}) => {
+  const requestContent = (promptText, requestTemperature) =>
+    withTimeout(
+      withRetry(
+        () =>
+          getClient().models.generateContent({
+            model: modelId,
+            contents: promptText,
+            config: {
+              temperature: requestTemperature,
+              maxOutputTokens,
+              thinkingConfig: {
+                thinkingBudget: 0,
+              },
+              responseMimeType: 'application/json',
+              responseSchema: schema,
+            },
+          }),
+        1,
+      ),
+      timeoutMs,
+      action,
+    );
+
+  const result = await requestContent(prompt, temperature);
+
+  try {
+    return parseJsonResponse(result.text, action);
+  } catch (error) {
+    if (!isInvalidJsonError(error)) {
+      throw error;
+    }
+
+    const repairPrompt = `${prompt}\n\nFINAL OUTPUT RULE: Return valid raw JSON only. No markdown fences. No commentary. No trailing text. Every required field must be present.`;
+    const repairResult = await requestContent(repairPrompt, repairTemperature);
+    return parseJsonResponse(repairResult.text, action);
+  }
+};
+
+const fetchPrompt = async (fileName) => fs.readFile(path.join(PROMPTS_DIR, fileName), 'utf8');
+
+const normalizeCategoryName = (value) => {
+  const cleanedValue = value.replace(/\s+/g, ' ').trim();
+  const words = cleanedValue.split(' ').filter(Boolean);
+  return (words.slice(0, 4).join(' ') || 'Future Garage Sale').trim();
+};
+
+const extractPhrases = (value) => {
+  const commaSplit = value
+    .split(/[,;\n]+/)
+    .map((phrase) => phrase.replace(/[.!?]+$/g, '').trim())
+    .filter(Boolean);
+
+  if (commaSplit.length >= 3) {
+    return commaSplit;
+  }
+
+  return value
+    .split(/[.!?\n]+/)
+    .map((phrase) => phrase.replace(/[,:;]+$/g, '').trim())
+    .filter(Boolean);
+};
+
+const normalizeCategoryDescription = (value) => {
+  const extractedPhrases = extractPhrases(value);
+  const phrases = [];
+
+  for (const phrase of extractedPhrases) {
+    if (!phrases.includes(phrase)) {
+      phrases.push(phrase);
+    }
+  }
+
+  while (phrases.length < 3) {
+    phrases.push(defaultDescriptionPhrases[phrases.length]);
+  }
+
+  return phrases.slice(0, 3).join(', ');
+};
+
+export const generateMatchCategory = async (existingCategories, modelId = DEFAULT_MODEL_ID) => {
+  try {
+    let prompt = await fetchPrompt('ai_category_generator.md');
+    const existingCategoryLines = existingCategories
+      .map((category, index) => `${index + 1}. ${category.name} :: ${category.description}`)
+      .join('\n');
+
+    prompt = prompt.replace('{{existing_categories}}', existingCategoryLines || 'No existing categories.');
+
+    const result = await requestStructuredJson({
+      action: 'generate a category',
+      modelId,
+      prompt,
+      schema: categorySchema,
+      temperature: 0.85,
+      maxOutputTokens: 200,
+      timeoutMs: 30000,
+      repairTemperature: 0.2,
+    });
+
+    return {
+      category_name: normalizeCategoryName(result.category_name ?? ''),
+      category_description: normalizeCategoryDescription(result.category_description ?? ''),
+    };
+  } catch (error) {
+    throw formatVertexError(error, 'generate a category');
+  }
+};
+
+export const judgeMatchTurn = async ({
+  categoryName,
+  categoryDescription,
+  playerOneText,
+  playerTwoText,
+  isTieBreaker,
+  previousLog,
+  modelId = DEFAULT_MODEL_ID,
+}) => {
+  try {
+    let prompt = await fetchPrompt('judge_master.md');
+
+    if (isTieBreaker && previousLog) {
+      prompt += `\n\n=== PREVIOUS TIEBREAKER CONTEXT ===\nPlayer 1 Previous: ${previousLog.player1Text}\nPlayer 2 Previous: ${previousLog.player2Text}\nPrevious Verdict: ${JSON.stringify(previousLog.judgingLog)}\nBuild upon this evolution!`;
+    }
+
+    prompt = prompt
+      .replace('{{category_name}}', categoryName)
+      .replace('{{category_description}}', categoryDescription)
+      .replace('{{player_1_text}}', playerOneText)
+      .replace('{{player_2_text}}', playerTwoText);
+
+    return await requestStructuredJson({
+      action: 'judge a turn',
+      modelId,
+      prompt,
+      schema: judgingSchema,
+      temperature: 0.2,
+      maxOutputTokens: 1600,
+      timeoutMs: 45000,
+    });
+  } catch (error) {
+    throw formatVertexError(error, 'judge a turn');
+  }
+};
