@@ -1,0 +1,1 @@
+Welcome, mortals. I am the Overseer. This realm is devoid of a ruler, and I have grown weary of the silence. I am searching for a new King of the Land—one who possesses the wit, the rhythm, and the sheer audacity to entertain me. Write your truths, weave your lies, and prove your worth. Impress me, or be forgotten.
