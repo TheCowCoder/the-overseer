@@ -1,5 +1,3 @@
-import { ChevronDown } from 'lucide-react';
-
 import type { ModelOption } from '../../shared/modelOptions.js';
 import type { MatchPlayer, PlayerId } from '../types';
 import { cn } from "./Button";
@@ -58,9 +56,6 @@ export const Header = ({
         <div className={cn("min-w-0", alignRight && "text-right")}>
           <div className={cn("flex items-center gap-2", alignRight && "flex-row-reverse")}>
             <span className="truncate text-sm font-bold text-gray-700">{player.name}</span>
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">
-              {player.score}
-            </span>
           </div>
 
           {statusLabel && (
@@ -82,22 +77,19 @@ export const Header = ({
         {renderPlayer(leftPlayer)}
 
         {modelOptions && selectedModelId && onModelChange ? (
-          <div className="relative">
-            <select
-              value={selectedModelId}
-              onChange={(event) => onModelChange(event.target.value)}
-              className="w-full appearance-none rounded-full border border-gray-200 bg-white py-2 pl-3 pr-8 text-[10px] font-black tracking-[0.14em] text-gray-600 shadow-sm outline-none transition-all hover:border-gray-300 focus:border-duo-blue"
-            >
-              {modelOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-          </div>
+          <select
+            value={selectedModelId}
+            onChange={(event) => onModelChange(event.target.value)}
+            className="w-full appearance-none rounded-full border border-gray-200 bg-white py-1.5 text-center text-[10px] font-black tracking-[0.14em] text-gray-600 shadow-sm outline-none transition-all hover:border-gray-300 focus:border-duo-blue"
+          >
+            {modelOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         ) : (
-          <div className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 shadow-sm">
+          <div className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-center text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 shadow-sm">
             {centerLabel}
           </div>
         )}

@@ -1,4 +1,4 @@
-Here are the updated files to perfectly center the bubbles on the path's bumps, add the Duolingo 3D button styling, convert the preview button, strip out the pill/score counters, and trim down the model select.
+To fix the `BOARD_SWAY` reference error and implement the requested layout and UI changes, we need to update the imports and logic in the main app files.
 
 ### src/lib/gameShared.ts
 ```typescript
@@ -14,6 +14,7 @@ export const buildBoardPath = (boardHeight: number) => {
 
   for (let y = 0; y <= boardHeight; y += 5) {
     const yRelative = y - BOARD_TOP_OFFSET;
+    // We use cos so that yRelative = 0 (the first card) starts at a peak (cos(0)=1)
     const x = BOARD_WIDTH / 2 + Math.cos((yRelative * Math.PI) / BOARD_STEP) * BOARD_SWAY;
     points.push(`${x},${y}`);
   }
@@ -111,21 +112,23 @@ export const Header = ({
 
   return (
     <div className="fixed top-0 z-40 w-full max-w-md rounded-b-[2rem] border-b-2 border-gray-100 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-md">
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,10.75rem)_minmax(0,1fr)] items-center gap-2">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,8rem)_minmax(0,1fr)] items-center gap-2">
         {renderPlayer(leftPlayer)}
 
         {modelOptions && selectedModelId && onModelChange ? (
-          <select
-            value={selectedModelId}
-            onChange={(event) => onModelChange(event.target.value)}
-            className="w-full appearance-none rounded-full border border-gray-200 bg-white py-1.5 text-center text-[10px] font-black tracking-[0.14em] text-gray-600 shadow-sm outline-none transition-all hover:border-gray-300 focus:border-duo-blue"
-          >
-            {modelOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <div className="flex justify-center px-0">
+            <select
+              value={selectedModelId}
+              onChange={(event) => onModelChange(event.target.value)}
+              className="w-full appearance-none rounded-full border border-gray-200 bg-white py-1.5 text-center text-[10px] font-black tracking-[0.14em] text-gray-600 shadow-sm outline-none transition-all hover:border-gray-300 focus:border-duo-blue"
+            >
+              {modelOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
         ) : (
           <div className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-center text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 shadow-sm">
             {centerLabel}
@@ -139,38 +142,6 @@ export const Header = ({
 };
 ```
 
-### shared/modelOptions.js
-```javascript
-export const MODEL_OPTIONS = [
-  { id: 'gemini-3.1-pro-preview', label: '3.1 Pro' },
-  { id: 'gemini-3-flash-preview', label: '3 Flash' },
-  { id: 'gemini-2.5-pro', label: '2.5 Pro' },
-  { id: 'gemini-2.5-flash', label: '2.5 Flash' },
-];
-
-export const DEFAULT_MODEL_ID = 'gemini-3-flash-preview';
-
-export const isValidModelId = (value) => MODEL_OPTIONS.some((option) => option.id === value);
-```
-
-### shared/modelOptions.ts
-```typescript
-export type ModelId =
-  | 'gemini-3.1-pro-preview'
-  | 'gemini-3-flash-preview'
-  | 'gemini-2.5-pro'
-  | 'gemini-2.5-flash';
-
-export interface ModelOption {
-  id: ModelId;
-  label: string;
-}
-
-export const MODEL_OPTIONS: ModelOption[];
-export const DEFAULT_MODEL_ID: ModelId;
-export const isValidModelId: (value: string) => value is ModelId;
-```
-
 ### src/App.tsx
 ```tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -181,7 +152,7 @@ import { Button, cn } from './components/Button';
 import { Header } from './components/Header';
 import { JudgingLogPanel } from './components/JudgingLogPanel';
 import { DEFAULT_MODEL_ID, MODEL_OPTIONS, isValidModelId } from '../shared/modelOptions.js';
-import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, buildBoardPath } from './lib/gameShared';
+import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, BOARD_SWAY, buildBoardPath } from './lib/gameShared';
 import { socket } from './lib/socket';
 import type { Category, MatchView, PlayerId } from './types';
 
@@ -1154,7 +1125,7 @@ import { DEFAULT_MODEL_ID, MODEL_OPTIONS, isValidModelId } from '../../shared/mo
 import { Button, cn } from './Button';
 import { Header } from './Header';
 import { JudgingLogPanel } from './JudgingLogPanel';
-import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, buildBoardPath, getCapturedScore, otherPlayerId, toConnectedMatchPlayers } from '../lib/gameShared';
+import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, BOARD_SWAY, buildBoardPath, getCapturedScore, otherPlayerId, toConnectedMatchPlayers } from '../lib/gameShared';
 import { fetchPrompt } from '../lib/prompts';
 import type { Category, JudgingResult, MatchPlayer, Player, PlayerId, PromptLog } from '../types';
 

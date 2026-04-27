@@ -441,7 +441,9 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
 
   const renderCategoryCard = (category: Category, index: number) => {
     const top = BOARD_TOP_OFFSET + index * BOARD_STEP;
-    const left = BOARD_WIDTH / 2 + Math.sin((top - 20) / 50) * 60;
+    const yRelative = top - BOARD_TOP_OFFSET;
+    const left = BOARD_WIDTH / 2 + Math.cos((yRelative * Math.PI) / BOARD_STEP) * BOARD_SWAY;
+    
     const ownerPlayer = category.ownerId === 'ai' ? null : players.find((player) => player.id === category.ownerId) ?? null;
     const captor = players.find((player) => player.id === category.capturedBy) ?? null;
     const previewingPlayers = players.filter((player) => matchView?.previewSelections[player.id] === category.id);
@@ -455,10 +457,12 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
         animate={{ scale: 1, opacity: 1 }}
         transition={{ delay: index * 0.05 }}
         className={cn(
-          'absolute -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border-2 bg-white/95 px-4 py-3 text-left shadow-sm transition-all',
-          previewingPlayers.length === 2 && 'border-duo-purple shadow-[0_0_0_3px_rgba(206,130,255,0.18)]',
-          previewingPlayers.length === 1 && 'border-gray-300',
-          category.capturedBy && 'border-transparent',
+          'absolute -translate-x-1/2 -translate-y-1/2 rounded-[2rem] bg-white px-4 py-3 text-left transition-all duration-200',
+          previewingPlayers.length === 2 ? 'border-2 border-duo-purple shadow-[-4px_4px_0px_0px_#ce82ff]' :
+          previewingPlayers.length === 1 ? 'border-2 border-gray-300 shadow-[-4px_4px_0px_0px_#d1d5db]' :
+          'border-2 border-gray-200 shadow-[-4px_4px_0px_0px_#e5e7eb]',
+          !category.capturedBy && 'hover:border-duo-blue hover:shadow-[-4px_4px_0px_0px_#1cb0f6] active:shadow-[0_0_0_0_transparent] active:mt-[4px] active:-ml-[4px]',
+          category.capturedBy && 'border-transparent shadow-none opacity-80'
         )}
         style={{
           top,
@@ -677,7 +681,7 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
         </p>
       </div>
 
-      <div className="pb-8">
+      <div className="pb-8 relative">
         <div className="relative mx-auto w-full max-w-[20rem]" style={{ height: boardHeight }}>
           <svg className="pointer-events-none absolute left-0 top-0 h-full w-full text-gray-300" viewBox={`0 0 ${BOARD_WIDTH} ${boardHeight}`} preserveAspectRatio="none">
             <path d={boardPath} fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="10 10" />
@@ -829,22 +833,7 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
         />
       )}
 
-      {matchView?.phase === 'battle_path' && nextPlayer && (
-        <div className="fixed top-[4.6rem] z-30 w-full max-w-md px-6">
-          <div className="mx-auto flex justify-center">
-            <div className="relative">
-              <div className="absolute inset-1 rounded-full bg-[#ffd54a]/45 blur-xl" />
-              <div className="relative flex items-center gap-2 rounded-full border border-[#fff0a6] bg-white/92 px-4 py-2 shadow-sm">
-                <span className="text-[10px] font-black uppercase tracking-[0.22em] text-[#7a4b00]">Next:</span>
-                <div className="h-7 w-7 rounded-full border-2 border-white shadow-sm" style={{ backgroundColor: nextPlayer.color }} />
-                <span className="text-sm font-black text-gray-900">{nextPlayer.name}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <main className={cn('relative z-10 flex-1 overflow-y-auto px-6 pb-6', matchView ? (matchView.phase === 'battle_path' ? 'pt-32' : 'pt-20') : 'pt-10')}>
+      <main className={cn('relative z-10 flex-1 overflow-y-auto px-6 pb-6', matchView ? (matchView.phase === 'battle_path' ? 'pt-24' : 'pt-20') : 'pt-10')}>
         <AnimatePresence mode="wait">
           {!matchView && renderHomeScreen()}
           {matchView?.phase === 'category_setup' && renderCategorySetup()}
@@ -892,20 +881,19 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
               <Button variant="ghost" className="border-2 border-gray-200 bg-white" onClick={closePreview}>
                 Back
               </Button>
-              {matchView.phase === 'battle_path' && selfId === matchView.activePlayer && !previewCategory.capturedBy ? (
-                <Button
-                  onClick={() => {
+              <Button
+                variant="primary"
+                onClick={() => {
+                  if (matchView.phase === 'battle_path' && selfId === matchView.activePlayer && !previewCategory.capturedBy) {
                     socket.emit('battle:select', { categoryId: previewCategory.id });
                     setPreviewCategoryId(null);
-                  }}
-                >
-                  Choose Category
-                </Button>
-              ) : (
-                <Button variant="ghost" className="border-2 border-gray-200 bg-white" onClick={closePreview}>
-                  Close
-                </Button>
-              )}
+                  } else {
+                    closePreview();
+                  }
+                }}
+              >
+                Choose
+              </Button>
             </div>
           </motion.div>
         </motion.div>
