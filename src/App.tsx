@@ -1,9 +1,15 @@
+import { useState, useEffect } from 'react';
+import { Player, Category, GameScreen, JudgingResult } from './types';
+import { initGemini, generateAICategory, judgeTurn, fetchPrompt } from './lib/gemini';
+import { Button } from './components/Button';
+import { Header } from './components/Header';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Settings, Plus, Play, Info, X, Check, Trophy } from 'lucide-react';
+import { cn } from './components/Button';
+
+const COLORS = ['#58cc02', '#1cb0f6', '#ff4b4b', '#ffc800', '#ce82ff'];
+
 export default function App() {
-  return <div style={{padding: '20px'}}>
-    <h1>Hello from The Overseer!</h1>
-    <p>App is rendering!</p>
-  </div>;
-}
   const [screen, setScreen] = useState<GameScreen>('API_SETUP');
   const [apiKey, setApiKey] = useState('');
   const [players, setPlayers] = useState<Player[]>([]);
@@ -13,36 +19,26 @@ export default function App() {
   // Turn State
   const [activeCategory, setActiveCategory] = useState<Category | null>(null);
   const [p1Draft, setP1Draft] = useState('');
-  const[p2Draft, setP2Draft] = useState('');
+  const [p2Draft, setP2Draft] = useState('');
   const [judgingResult, setJudgingResult] = useState<JudgingResult | null>(null);
   const [hasSeenIntro, setHasSeenIntro] = useState({ player_1: false, player_2: false });
-  const[introText, setIntroText] = useState('');
+  const [introText, setIntroText] = useState('');
 
   // Modals & Inputs
   const [showCatModal, setShowCatModal] = useState(false);
   const [editingCat, setEditingCat] = useState<Category | null>(null);
-  const[catNameInput, setCatNameInput] = useState('');
-  const[catDescInput, setCatDescInput] = useState('');
+  const [catNameInput, setCatNameInput] = useState('');
+  const [catDescInput, setCatDescInput] = useState('');
 
   useEffect(() => {
     const key = localStorage.getItem('GEMINI_KEY');
     if (key) {
-      try {
-        setApiKey(key);
-        initGemini(key);
-        setScreen('ONBOARDING');
-      } catch (e) {
-        console.error("Failed to initialize with saved API key:", e);
-        localStorage.removeItem('GEMINI_KEY');
-      }
+      setApiKey(key);
+      initGemini(key);
+      setScreen('ONBOARDING');
     }
-    fetchPrompt('ui_intro_message.md')
-      .then(setIntroText)
-      .catch(e => {
-        console.error("Failed to fetch intro prompt:", e);
-        setIntroText('Get ready for the ultimate test of creativity and wit!');
-      });
-  },[]);
+    fetchPrompt('ui_intro_message.md').then(setIntroText).catch(console.error);
+  }, []);
 
   const saveApiKey = () => {
     localStorage.setItem('GEMINI_KEY', apiKey);
@@ -52,10 +48,11 @@ export default function App() {
 
   const handleOnboarding = (name: string, color: string) => {
     const newPlayer: Player = { id: activePlayer, name, color };
-    setPlayers(prev =>[...prev, newPlayer]);
+    setPlayers(prev => [...prev, newPlayer]);
     if (activePlayer === 'player_1') {
       setActivePlayer('player_2');
-      (document.getElementById('nameInput') as HTMLInputElement).value = '';
+      const nameInputEl = document.getElementById('nameInput') as HTMLInputElement;
+      if (nameInputEl) nameInputEl.value = '';
     } else {
       setScreen('CATEGORY_CREATION');
       setActivePlayer('player_1');
@@ -81,7 +78,7 @@ export default function App() {
     if (editingCat) {
       setCategories(cats => cats.map(c => c.id === editingCat.id ? { ...c, name: catNameInput, description: catDescInput } : c));
     } else {
-      setCategories(cats =>[...cats, {
+      setCategories(cats => [...cats, {
         id: Math.random().toString(),
         name: catNameInput, 
         description: catDescInput,
@@ -97,7 +94,7 @@ export default function App() {
   const generateAI = async () => {
     try {
       const res = await generateAICategory();
-      setCategories(cats =>[...cats, {
+      setCategories(cats => [...cats, {
         id: Math.random().toString(),
         name: res.category_name,
         description: res.category_description,
@@ -128,7 +125,9 @@ export default function App() {
     if (!activeCategory) return;
     
     const isTieBreaker = activeCategory.isTie;
-    const prevLog = isTieBreaker ? activeCategory.history[activeCategory.history.length - 1] : undefined;
+    const prevLog = isTieBreaker && activeCategory.history.length > 0 
+      ? activeCategory.history[activeCategory.history.length - 1] 
+      : undefined;
 
     try {
       const result = await judgeTurn(
@@ -144,7 +143,7 @@ export default function App() {
 
       setJudgingResult(result);
       
-      const newHistory =[...activeCategory.history, { player1Text: p1Draft, player2Text: p2Draft, judgingLog: result }];
+      const newHistory = [...activeCategory.history, { player1Text: p1Draft, player2Text: p2Draft, judgingLog: result }];
       
       setCategories(cats => cats.map(c => {
         if (c.id === activeCategory.id) {
@@ -193,7 +192,7 @@ export default function App() {
         <AnimatePresence mode='wait'>
           
           {screen === 'API_SETUP' && (
-            <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="flex flex-col h-full justify-center text-center gap-6">
+            <motion.div key="API_SETUP" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="flex flex-col h-full justify-center text-center gap-6">
               <Settings className="w-16 h-16 mx-auto text-duo-gray-dark" />
               <h1 className="text-3xl font-black text-gray-800">The Overseer</h1>
               <p className="text-gray-500 font-bold">Enter Gemini API Key to awake the Overseer.</p>
@@ -209,7 +208,7 @@ export default function App() {
           )}
 
           {screen === 'ONBOARDING' && (
-            <motion.div key={activePlayer} initial={{x:100, opacity:0}} animate={{x:0, opacity:1}} exit={{x:-100, opacity:0}} className="flex flex-col h-full justify-center text-center gap-6">
+            <motion.div key={`ONBOARDING_${activePlayer}`} initial={{x:100, opacity:0}} animate={{x:0, opacity:1}} exit={{x:-100, opacity:0}} className="flex flex-col h-full justify-center text-center gap-6">
               <h2 className="text-2xl font-black text-gray-800 uppercase tracking-widest">Hand phone to</h2>
               <h1 className="text-5xl font-black text-duo-blue">{activePlayer === 'player_1' ? 'Player 1' : 'Player 2'}</h1>
               <input 
@@ -228,13 +227,13 @@ export default function App() {
           )}
 
           {screen === 'CATEGORY_CREATION' && (
-            <motion.div initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full gap-4 relative">
+            <motion.div key="CATEGORY_CREATION" initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full gap-4 relative">
               <h2 className="text-2xl font-black text-center mb-2 text-gray-800">Create Categories</h2>
               <div className="flex-1 overflow-y-auto space-y-4 pb-4">
                 {categories.map(c => (
                   <div key={c.id} onClick={() => openCategoryModal(c)} className="bg-white rounded-2xl p-4 border-b-4 border-gray-200 cursor-pointer active:translate-y-1 active:border-b-0 transition-all shadow-sm">
                     <h3 className="font-black text-lg text-gray-800">{c.name}</h3>
-                    <p className="text-gray-500 font-semibold text-sm truncate">{c.description.substring(0, 50)}...</p>
+                    <p className="text-gray-500 font-semibold text-sm truncate">{c.description}</p>
                   </div>
                 ))}
               </div>
@@ -254,7 +253,7 @@ export default function App() {
           )}
 
           {screen === 'BATTLE_PATH' && (
-             <motion.div initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full relative py-10">
+             <motion.div key="BATTLE_PATH" initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full relative py-10">
                <div className="absolute inset-0 flex justify-center pointer-events-none">
                   <svg width="4" height="100%" className="text-gray-300">
                     <line x1="2" y1="0" x2="2" y2="100%" stroke="currentColor" strokeWidth="4" strokeDasharray="10 10"/>
@@ -284,7 +283,7 @@ export default function App() {
                          {c.isTie && (
                            <div className="absolute -top-2 -right-2 bg-duo-red text-white text-xs font-black px-2 py-1 rounded-full animate-bounce shadow-md">TIE!</div>
                          )}
-                         <div className="absolute top-1/2 left-full ml-4 -translate-y-1/2 bg-white px-3 py-2 rounded-xl shadow-sm border border-gray-100 whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
+                         <div className="absolute top-1/2 left-full ml-4 -translate-y-1/2 bg-white px-3 py-2 rounded-xl shadow-sm border border-gray-100 whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
                            <p className="font-bold text-sm text-gray-700">{c.name}</p>
                          </div>
                       </motion.div>
@@ -295,7 +294,7 @@ export default function App() {
           )}
 
           {screen === 'HANDOFF' && (
-            <motion.div initial={{scale:0.8, opacity:0}} animate={{scale:1, opacity:1}} className="flex flex-col h-full justify-center items-center text-center gap-8 px-6 absolute inset-0 bg-white z-50">
+            <motion.div key="HANDOFF" initial={{scale:0.8, opacity:0}} animate={{scale:1, opacity:1}} className="flex flex-col h-full justify-center items-center text-center gap-8 px-6 absolute inset-0 bg-white z-50">
                <h1 className="text-4xl font-black text-gray-800">Hand phone to</h1>
                <h2 className="text-6xl font-black" style={{color: players.find(p=>p.id === activePlayer)?.color}}>
                  {players.find(p=>p.id === activePlayer)?.name}
@@ -316,7 +315,7 @@ export default function App() {
           )}
 
           {screen === 'PROMPT_ENTRY' && activeCategory && (
-            <motion.div initial={{y:50, opacity:0}} animate={{y:0, opacity:1}} className="flex flex-col h-full relative pt-2">
+            <motion.div key="PROMPT_ENTRY" initial={{y:50, opacity:0}} animate={{y:0, opacity:1}} className="flex flex-col h-full relative pt-2">
                <div className="bg-white rounded-3xl p-5 mb-4 shadow-sm border-2 border-gray-100">
                   <h3 className="font-black text-xl mb-1 text-gray-800">{activeCategory.name}</h3>
                   <p className="text-gray-500 font-semibold text-sm">{activeCategory.description}</p>
@@ -348,23 +347,23 @@ export default function App() {
           )}
 
           {screen === 'RESOLVING' && (
-            <motion.div initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full justify-center items-center text-center gap-6">
+            <motion.div key="RESOLVING" initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full justify-center items-center text-center gap-6">
                <div className="w-24 h-24 border-8 border-duo-purple border-t-transparent rounded-full animate-spin"></div>
                <h2 className="text-3xl font-black text-gray-800 animate-pulse">The Overseer Judges...</h2>
             </motion.div>
           )}
 
           {screen === 'RESULTS_MODAL' && judgingResult && (
-             <motion.div initial={{scale:0.9, opacity:0}} animate={{scale:1, opacity:1}} className="flex flex-col h-full overflow-y-auto scrollbar-hide pb-10">
+             <motion.div key="RESULTS_MODAL" initial={{scale:0.9, opacity:0}} animate={{scale:1, opacity:1}} className="flex flex-col h-full overflow-y-auto scrollbar-hide pb-10">
                 <h2 className="text-3xl font-black text-center mb-6 text-gray-800">Judgment</h2>
                 
                 <div className="space-y-4 mb-6">
-                  <div className="bg-white p-5 rounded-3xl shadow-sm border-l-8" style={{borderColor: players[0].color}}>
-                    <p className="font-bold text-sm text-gray-400 mb-2">{players[0].name}</p>
+                  <div className="bg-white p-5 rounded-3xl shadow-sm border-l-8" style={{borderColor: players[0]?.color}}>
+                    <p className="font-bold text-sm text-gray-400 mb-2">{players[0]?.name}</p>
                     <p className="font-bold text-gray-800">{p1Draft}</p>
                   </div>
-                  <div className="bg-white p-5 rounded-3xl shadow-sm border-l-8" style={{borderColor: players[1].color}}>
-                    <p className="font-bold text-sm text-gray-400 mb-2">{players[1].name}</p>
+                  <div className="bg-white p-5 rounded-3xl shadow-sm border-l-8" style={{borderColor: players[1]?.color}}>
+                    <p className="font-bold text-sm text-gray-400 mb-2">{players[1]?.name}</p>
                     <p className="font-bold text-gray-800">{p2Draft}</p>
                   </div>
                 </div>
@@ -384,7 +383,7 @@ export default function App() {
           )}
 
           {screen === 'WIN_SCREEN' && (
-            <motion.div initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full relative">
+            <motion.div key="WIN_SCREEN" initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col h-full relative">
               <div className="text-center mb-6 shrink-0">
                 <Trophy className="w-16 h-16 text-duo-yellow mx-auto mb-2" />
                 <h1 className="text-4xl font-black text-gray-800">Game Over</h1>
@@ -409,13 +408,13 @@ export default function App() {
                         <div key={hIndex} className="space-y-3">
                           {cat.history.length > 1 && <div className="text-center text-xs font-bold text-gray-400 uppercase">Round {hIndex + 1}</div>}
                           
-                          <div className="bg-gray-50 p-3 rounded-2xl border-l-4" style={{borderColor: players[0].color}}>
-                            <span className="text-xs font-black text-gray-400 block mb-1">{players[0].name}</span>
+                          <div className="bg-gray-50 p-3 rounded-2xl border-l-4" style={{borderColor: players[0]?.color}}>
+                            <span className="text-xs font-black text-gray-400 block mb-1">{players[0]?.name}</span>
                             <p className="font-bold text-sm text-gray-700">{log.player1Text}</p>
                           </div>
                           
-                          <div className="bg-gray-50 p-3 rounded-2xl border-l-4" style={{borderColor: players[1].color}}>
-                            <span className="text-xs font-black text-gray-400 block mb-1">{players[1].name}</span>
+                          <div className="bg-gray-50 p-3 rounded-2xl border-l-4" style={{borderColor: players[1]?.color}}>
+                            <span className="text-xs font-black text-gray-400 block mb-1">{players[1]?.name}</span>
                             <p className="font-bold text-sm text-gray-700">{log.player2Text}</p>
                           </div>
                           
