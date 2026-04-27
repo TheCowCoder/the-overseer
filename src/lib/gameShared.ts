@@ -10,7 +10,6 @@ export const buildBoardPath = (boardHeight: number) => {
 
   for (let y = 0; y <= boardHeight; y += 5) {
     const yRelative = y - BOARD_TOP_OFFSET;
-    // We use cos so that yRelative = 0 (the first card) starts at a peak (cos(0)=1)
     const x = BOARD_WIDTH / 2 + Math.cos((yRelative * Math.PI) / BOARD_STEP) * BOARD_SWAY;
     points.push(`${x},${y}`);
   }

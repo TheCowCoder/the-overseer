@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, Info, LoaderCircle, Play, Trophy, X } from 'lucide-react';
+import { Check, Info, LoaderCircle, Trophy, X } from 'lucide-react';
 
 import { DEFAULT_MODEL_ID, MODEL_OPTIONS, isValidModelId } from '../../shared/modelOptions.js';
+import { BoardCategoryCard } from './BoardCategoryCard';
 import { Button, cn } from './Button';
+import { CategoryBoardModal } from './CategoryBoardModal';
 import { Header } from './Header';
 import { JudgingLogPanel } from './JudgingLogPanel';
-import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, BOARD_SWAY, buildBoardPath, getCapturedScore, otherPlayerId, toConnectedMatchPlayers } from '../lib/gameShared';
+import { StickyStatusPill } from './StickyStatusPill';
+import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, buildBoardPath, getCapturedScore, otherPlayerId, toConnectedMatchPlayers } from '../lib/gameShared';
 import { fetchPrompt } from '../lib/prompts';
 import type { Category, JudgingResult, MatchPlayer, Player, PlayerId, PromptLog } from '../types';
 
@@ -91,6 +94,7 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
   const [currentResultLog, setCurrentResultLog] = useState<PromptLog | null>(null);
   const [winnerId, setWinnerId] = useState<PlayerId | null>(null);
   const [selectedModelId, setSelectedModelId] = useState(DEFAULT_MODEL_ID);
+  const [previewCategoryId, setPreviewCategoryId] = useState<string | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [categoryNameInput, setCategoryNameInput] = useState('');
@@ -102,6 +106,8 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
   });
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [promptTypingPlayerIds, setPromptTypingPlayerIds] = useState<PlayerId[]>([]);
+  const promptTypingTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     fetchPrompt('ui_intro_message.md').then(setIntroText).catch(() => {
@@ -113,9 +119,11 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
   const boardPath = useMemo(() => buildBoardPath(boardHeight), [boardHeight]);
 
   const activeCategory = categories.find((category) => category.id === activeCategoryId) ?? null;
+  const previewCategory = categories.find((category) => category.id === previewCategoryId) ?? null;
   const currentChooser = players.find((player) => player.id === selectionPlayerId) ?? null;
   const currentPromptPlayer = players.find((player) => player.id === promptPlayerId) ?? null;
   const resultsLogs = activeCategory && currentResultLog ? [currentResultLog] : [];
+  const previewCategoryHasLog = Boolean(previewCategory?.capturedBy && previewCategory.history.length > 0);
 
   const headerPlayers = useMemo<MatchPlayer[]>(() => toConnectedMatchPlayers(players, categories), [categories, players]);
 
@@ -124,8 +132,8 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
       return [selectionPlayerId];
     }
 
-    if (screen === 'HANDOFF' || screen === 'PROMPT_ENTRY') {
-      return [promptPlayerId];
+    if (screen === 'PROMPT_ENTRY') {
+      return promptTypingPlayerIds;
     }
 
     if (screen === 'RESOLVING') {
@@ -133,7 +141,7 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
     }
 
     return [] as PlayerId[];
-  }, [players, promptPlayerId, screen, selectionPlayerId]);
+  }, [players, promptTypingPlayerIds, screen, selectionPlayerId]);
 
   const centerLabel = useMemo(() => {
     switch (screen) {
@@ -159,8 +167,27 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
     setDrafts({ player_1: '', player_2: '' });
     setActiveCategoryId(null);
     setCurrentResultLog(null);
+    setPreviewCategoryId(null);
     setPromptPlayerId('player_1');
   };
+
+  useEffect(() => {
+    if (screen !== 'BATTLE_PATH') {
+      setPreviewCategoryId(null);
+    }
+
+    if (screen !== 'PROMPT_ENTRY') {
+      setPromptTypingPlayerIds([]);
+    }
+  }, [screen]);
+
+  useEffect(() => {
+    return () => {
+      if (promptTypingTimeoutRef.current) {
+        window.clearTimeout(promptTypingTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleOnboarding = (color: string) => {
     const trimmedName = setupName.trim();
@@ -280,9 +307,19 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
     }
 
     setError(null);
+    setPreviewCategoryId(null);
+    setPromptTypingPlayerIds([]);
     setActiveCategoryId(category.id);
     setPromptPlayerId('player_1');
     setScreen('HANDOFF');
+  };
+
+  const openPreview = (categoryId: string) => {
+    setPreviewCategoryId(categoryId);
+  };
+
+  const closePreview = () => {
+    setPreviewCategoryId(null);
   };
 
   const handlePromptAdvance = () => {
@@ -291,6 +328,12 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
     if (!currentDraft) {
       return;
     }
+
+    if (promptTypingTimeoutRef.current) {
+      window.clearTimeout(promptTypingTimeoutRef.current);
+    }
+
+    setPromptTypingPlayerIds([]);
 
     if (promptPlayerId === 'player_1') {
       setPromptPlayerId('player_2');
@@ -372,7 +415,33 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
   const handleContinue = () => {
     resetRoundState();
     setError(null);
+    setPromptTypingPlayerIds([]);
     setScreen('BATTLE_PATH');
+  };
+
+  const handlePromptDraftChange = (nextValue: string) => {
+    setDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [promptPlayerId]: nextValue,
+    }));
+
+    const isTyping = nextValue.trim().length > 0;
+    setPromptTypingPlayerIds(isTyping ? [promptPlayerId] : []);
+
+    if (promptTypingTimeoutRef.current) {
+      window.clearTimeout(promptTypingTimeoutRef.current);
+    }
+
+    if (!isTyping) {
+      return;
+    }
+
+    const typingPlayerId = promptPlayerId;
+    promptTypingTimeoutRef.current = window.setTimeout(() => {
+      setPromptTypingPlayerIds((currentValue) =>
+        currentValue.includes(typingPlayerId) ? [] : currentValue,
+      );
+    }, 900);
   };
 
   const renderBanner = () => {
@@ -396,58 +465,18 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
   };
 
   const renderBoardCard = (category: Category, index: number) => {
-    const top = BOARD_TOP_OFFSET + index * BOARD_STEP;
-    const yRelative = top - BOARD_TOP_OFFSET;
-    const left = BOARD_WIDTH / 2 + Math.cos((yRelative * Math.PI) / BOARD_STEP) * BOARD_SWAY;
     const captor = players.find((player) => player.id === category.capturedBy) ?? null;
 
     return (
-      <motion.button
+      <BoardCategoryCard
         key={category.id}
-        type="button"
-        initial={{ scale: 0.94, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ delay: index * 0.05 }}
-        className={cn(
-          'absolute -translate-x-1/2 -translate-y-1/2 rounded-[2rem] bg-white px-4 py-3 text-left transition-all duration-200',
-          'border-2 border-gray-200 shadow-[-4px_4px_0px_0px_#e5e7eb]',
-          !category.capturedBy && 'hover:border-duo-blue hover:shadow-[-4px_4px_0px_0px_#1cb0f6] active:shadow-[0_0_0_0_transparent] active:mt-[4px] active:-ml-[4px]',
-          category.capturedBy && 'border-transparent shadow-none opacity-80'
-        )}
-        style={{
-          top,
-          left,
-          width: '15rem',
-          backgroundColor: captor ? `${captor.color}14` : undefined,
-        }}
-        onClick={() => handleStartTurn(category)}
-      >
-        <div className="flex items-start gap-3">
-          <div
-            className={cn(
-              'flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 text-lg font-black shadow-sm',
-              captor ? 'border-white text-white' : 'border-gray-200 bg-gray-50 text-gray-400',
-            )}
-            style={captor ? { backgroundColor: captor.color } : undefined}
-          >
-            {captor ? <Play className="h-5 w-5 fill-current" /> : index + 1}
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-black text-gray-800">{category.name}</p>
-            <p className="mt-1 line-clamp-2 text-xs font-bold leading-relaxed text-gray-500">{category.description}</p>
-          </div>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <span className={cn('rounded-full px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em]', captor ? 'bg-white/75 text-gray-700' : 'bg-gray-100 text-gray-500')}>
-            {captor ? `${captor.name} owns it` : category.createdBy === 'ai' ? 'Overseer Pick' : 'Open Category'}
-          </span>
-          <span className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">
-            {category.capturedBy ? 'Captured' : 'Choose'}
-          </span>
-        </div>
-      </motion.button>
+        category={category}
+        index={index}
+        captor={captor}
+        ownerPillLabel={captor ? `${captor.name} owns it` : category.createdBy === 'ai' ? 'Overseer Pick' : 'Open Category'}
+        statusText={category.capturedBy ? 'Log' : 'Preview'}
+        onClick={() => openPreview(category.id)}
+      />
     );
   };
 
@@ -566,17 +595,17 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
   );
 
   const renderBattlePath = () => (
-    <motion.div key="BATTLE_PATH" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col overflow-hidden">
+    <motion.div key="BATTLE_PATH" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col">
       {renderBanner()}
+
+      {currentChooser && <StickyStatusPill label="Next:" value={currentChooser.name} color={currentChooser.color} />}
 
       <div className="shrink-0 pb-4 text-center">
         <h2 className="text-3xl font-black text-gray-800">Pick A Category</h2>
-        <p className="mt-2 text-sm font-bold text-gray-500">
-          {currentChooser ? `${currentChooser.name} chooses the next uncaptured category.` : 'Choose the next uncaptured category.'}
-        </p>
+        <p className="mt-2 text-sm font-bold text-gray-500">Captured categories reopen the ruling. Uncaptured categories open the category brief before the round begins.</p>
       </div>
 
-      <div className="duo-scrollbar flex-1 overflow-y-auto pb-8 relative">
+      <div className="pb-8 relative">
         <div className="relative mx-auto w-full max-w-[20rem]" style={{ height: boardHeight }}>
           <svg className="pointer-events-none absolute left-0 top-0 h-full w-full text-gray-300" viewBox={`0 0 ${BOARD_WIDTH} ${boardHeight}`} preserveAspectRatio="none">
             <path d={boardPath} fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="10 10" />
@@ -638,12 +667,7 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
             className="h-full min-h-[18rem] w-full resize-none rounded-[2rem] bg-transparent p-5 text-lg font-bold text-gray-800 outline-none"
             placeholder="Weave your lies..."
             value={drafts[promptPlayerId]}
-            onChange={(event) =>
-              setDrafts((currentDrafts) => ({
-                ...currentDrafts,
-                [promptPlayerId]: event.target.value,
-              }))
-            }
+            onChange={(event) => handlePromptDraftChange(event.target.value)}
             spellCheck
           />
         </div>
@@ -679,7 +703,7 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
     }
 
     return (
-      <motion.div key="RESULTS" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col overflow-hidden">
+      <motion.div key="RESULTS" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col">
         {renderBanner()}
 
         <div className="shrink-0 pb-4 text-center">
@@ -687,11 +711,11 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
           <p className="mt-2 text-sm font-bold text-gray-500">Review the ruling, then keep the phone moving.</p>
         </div>
 
-        <div className="duo-scrollbar flex-1 overflow-y-auto pb-6">
+        <div className="pb-6">
           <JudgingLogPanel className="w-full" category={activeCategory} logs={resultsLogs} players={players} />
         </div>
 
-        <div className="shrink-0 border-t-2 border-gray-100 bg-duo-gray/90 pt-4">
+        <div className="mt-auto shrink-0 border-t-2 border-gray-100 bg-duo-gray/90 pt-4">
           <Button onClick={handleContinue}>Continue</Button>
         </div>
       </motion.div>
@@ -702,7 +726,7 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
     const winningPlayer = players.find((player) => player.id === winnerId) ?? null;
 
     return (
-      <motion.div key="WIN" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col overflow-hidden">
+      <motion.div key="WIN" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col">
         {renderBanner()}
 
         <div className="mb-6 shrink-0 text-center">
@@ -713,7 +737,7 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
           </p>
         </div>
 
-        <div className="duo-scrollbar flex-1 overflow-y-auto space-y-8 pb-10">
+        <div className="space-y-8 pb-10">
           {categories.map((category, index) => (
             <section key={category.id} className="space-y-3">
               <div className="flex items-center justify-between px-1">
@@ -736,7 +760,7 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
   const showHeader = players.length === 2 && screen !== 'ONBOARDING' && screen !== 'HANDOFF';
 
   return (
-    <div className="relative mx-auto flex h-screen w-full max-w-md flex-col overflow-x-hidden bg-duo-gray shadow-2xl md:mt-[2.5vh] md:h-[95vh] md:rounded-3xl">
+    <div className="relative mx-auto flex min-h-screen w-full max-w-md flex-col overflow-x-hidden bg-duo-gray shadow-2xl md:my-[2.5vh] md:min-h-[95vh] md:rounded-3xl">
       {showHeader && (
         <Header
           players={headerPlayers}
@@ -752,7 +776,7 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
         />
       )}
 
-      <main className={cn('relative z-10 flex-1 overflow-y-auto px-6 pb-6', showHeader ? (screen === 'BATTLE_PATH' ? 'pt-24' : 'pt-20') : 'pt-10')}>
+      <main className={cn('relative z-10 flex-1 px-6 pb-6', showHeader ? 'pt-20' : 'pt-10')}>
         <AnimatePresence mode="wait">
           {screen === 'ONBOARDING' && renderOnboarding()}
           {screen === 'CATEGORY_CREATION' && renderCategoryCreation()}
@@ -766,6 +790,23 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
       </main>
 
       <AnimatePresence>
+        {previewCategory && screen === 'BATTLE_PATH' && (
+          <CategoryBoardModal
+            category={previewCategory}
+            players={players}
+            onClose={closePreview}
+            primaryActionLabel={previewCategory.capturedBy ? 'Close' : 'Start Round'}
+            onPrimaryAction={() => {
+              if (!previewCategory.capturedBy) {
+                handleStartTurn(previewCategory);
+                return;
+              }
+
+              closePreview();
+            }}
+          />
+        )}
+
         {showCategoryModal && (
           <motion.div
             initial={{ opacity: 0 }}

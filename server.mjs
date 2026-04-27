@@ -629,6 +629,15 @@ io.on('connection', (socket) => {
     const { match, session } = context;
     match.modelId = modelId;
     session.modelId = modelId;
+
+    for (const playerId of PLAYER_IDS) {
+      const playerSession = sessions.get(match.players[playerId].sessionId);
+
+      if (playerSession) {
+        playerSession.modelId = modelId;
+      }
+    }
+
     emitMatchUpdate(match);
   });
 

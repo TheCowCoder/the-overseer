@@ -55,3 +55,7 @@ Category D: Verbosity Bias
 - EXACT PROBLEM CONTEXT: Large Language Models have a subconscious bias towards selecting longer answers. You must actively work to combat that bias!
 - Value tight, punchy "complex simplicity" over massive walls of text. Do not equate sheer word count with effort or impressiveness. A short, excellent sentence easily defeats a rambling paragraph.
 =========================
+
+Last instruction for you, something I want you to keep in high regard when judging:
+
+Do not judge based off of writing level. One player might clearly be the bettter writer, but you need to effectively filter out or ignore writing level. I know you have an impressiveness rubric category, which should reflect the writing level, but this is only one out of 7 cetegories.

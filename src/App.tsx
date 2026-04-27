@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, Info, LoaderCircle, Play, Trophy, WifiOff, X } from 'lucide-react';
+import { Check, Info, LoaderCircle, Trophy, WifiOff, X } from 'lucide-react';
 
+import { BoardCategoryCard } from './components/BoardCategoryCard';
 import { Button, cn } from './components/Button';
+import { CategoryBoardModal } from './components/CategoryBoardModal';
 import { Header } from './components/Header';
 import { JudgingLogPanel } from './components/JudgingLogPanel';
+import { StickyStatusPill } from './components/StickyStatusPill';
 import { DEFAULT_MODEL_ID, MODEL_OPTIONS, isValidModelId } from '../shared/modelOptions.js';
-import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, BOARD_SWAY, buildBoardPath } from './lib/gameShared';
+import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, buildBoardPath } from './lib/gameShared';
 import { socket } from './lib/socket';
 import type { Category, MatchView, PlayerId } from './types';
 
@@ -67,6 +70,7 @@ const ownerLabel = (category: Category, players: MatchView['players']) => {
 export default function App({ onBack }: OnlineMultiplayerAppProps) {
   const [profile, setProfile] = useState<HomeProfile>(readStoredProfile);
   const [sessionId, setSessionId] = useState<string>(readStoredSessionId);
+  const [resumeSessionId, setResumeSessionId] = useState<string>(readStoredSessionId);
   const [queueing, setQueueing] = useState(false);
   const [matchView, setMatchView] = useState<MatchView | null>(null);
   const [socketConnected, setSocketConnected] = useState(socket.connected);
@@ -80,19 +84,20 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
 
   const typingTimeoutRef = useRef<number | null>(null);
   const categoryTypingTimeoutRef = useRef<number | null>(null);
+  const promptDraftSeedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
   }, [profile]);
 
   useEffect(() => {
-    if (!sessionId) {
+    if (!resumeSessionId) {
       window.localStorage.removeItem(SESSION_STORAGE_KEY);
       return;
     }
 
-    window.localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
-  }, [sessionId]);
+    window.localStorage.setItem(SESSION_STORAGE_KEY, resumeSessionId);
+  }, [resumeSessionId]);
 
   useEffect(() => {
     socket.connect();
@@ -100,8 +105,8 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
     const handleConnect = () => {
       setSocketConnected(true);
 
-      if (sessionId) {
-        socket.emit('player:resume', { sessionId });
+      if (resumeSessionId) {
+        socket.emit('player:resume', { sessionId: resumeSessionId });
       }
     };
 
@@ -124,6 +129,9 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
 
     const handleMatchUpdate = (nextMatchView: MatchView) => {
       setMatchView(nextMatchView);
+      if (sessionId) {
+        setResumeSessionId(sessionId);
+      }
       if (isValidModelId(nextMatchView.modelId)) {
         setSelectedModelId(nextMatchView.modelId);
       }
@@ -143,8 +151,8 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
     socket.on('match:update', handleMatchUpdate);
     socket.on('match:error', handleMatchError);
 
-    if (socket.connected && sessionId) {
-      socket.emit('player:resume', { sessionId });
+    if (socket.connected && resumeSessionId) {
+      socket.emit('player:resume', { sessionId: resumeSessionId });
     }
 
     return () => {
@@ -156,13 +164,14 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
       socket.off('match:update', handleMatchUpdate);
       socket.off('match:error', handleMatchError);
     };
-  }, [sessionId]);
+  }, [resumeSessionId, sessionId]);
 
   useEffect(() => {
     if (!matchView) {
       setDraft('');
       setPreviewCategoryId(null);
       setEditingCategoryId(null);
+      promptDraftSeedKeyRef.current = null;
       return;
     }
 
@@ -176,12 +185,19 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
     }
 
     if (matchView.phase === 'prompt_entry') {
-      setDraft(matchView.promptDraft ?? '');
+      const nextSeedKey = `${matchView.activeCategoryId ?? 'none'}:${matchView.selfId}`;
+
+      if (promptDraftSeedKeyRef.current !== nextSeedKey) {
+        setDraft(matchView.promptDraft ?? '');
+        promptDraftSeedKeyRef.current = nextSeedKey;
+      }
+
       return;
     }
 
+    promptDraftSeedKeyRef.current = null;
     setDraft('');
-  }, [matchView?.phase, matchView?.activeCategoryId, matchView?.promptDraft]);
+  }, [matchView?.phase, matchView?.activeCategoryId, matchView?.selfId]);
 
   useEffect(() => {
     return () => {
@@ -199,11 +215,11 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
   const players = matchView?.players ?? [];
   const selfId = matchView?.selfId ?? 'player_1';
   const selfPlayer = players.find((player) => player.id === selfId) ?? null;
-  const nextPlayer = players.find((player) => player.id === matchView?.activePlayer) ?? null;
   const activeCategory = categories.find((category) => category.id === matchView?.activeCategoryId) ?? null;
   const previewCategory = categories.find((category) => category.id === previewCategoryId) ?? null;
   const editingCategory = categories.find((category) => category.id === editingCategoryId) ?? null;
   const currentResultLogs = activeCategory && matchView?.currentResultLog ? [matchView.currentResultLog] : [];
+  const activeChooser = players.find((player) => player.id === matchView?.activePlayer) ?? null;
 
   useEffect(() => {
     if (selfPlayer && selfPlayer.color !== profile.color) {
@@ -339,7 +355,6 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
     setError(null);
     socket.connect();
     socket.emit('player:queue', {
-      sessionId: sessionId || undefined,
       name: trimmedName,
       color: profile.color,
       modelId: selectedModelId,
@@ -361,6 +376,8 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
   const handleLeaveQueue = () => {
     socket.emit('queue:leave');
     setQueueing(false);
+    setSessionId('');
+    setResumeSessionId('');
   };
 
   const handleSaveCategory = () => {
@@ -421,8 +438,14 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
 
   const renderSystemBanner = () => {
     const bannerText = error ?? matchView?.systemMessage ?? (!socketConnected ? 'Trying to reconnect to the match server.' : null);
+    const hideBattlePathTurnMessage =
+      !error &&
+      matchView?.phase === 'battle_path' &&
+      bannerText === matchView.systemMessage &&
+      typeof matchView.systemMessage === 'string' &&
+      /chooses .*category/i.test(matchView.systemMessage);
 
-    if (!bannerText) {
+    if (!bannerText || hideBattlePathTurnMessage) {
       return null;
     }
 
@@ -440,86 +463,22 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
   };
 
   const renderCategoryCard = (category: Category, index: number) => {
-    const top = BOARD_TOP_OFFSET + index * BOARD_STEP;
-    const yRelative = top - BOARD_TOP_OFFSET;
-    const left = BOARD_WIDTH / 2 + Math.cos((yRelative * Math.PI) / BOARD_STEP) * BOARD_SWAY;
-    
     const ownerPlayer = category.ownerId === 'ai' ? null : players.find((player) => player.id === category.ownerId) ?? null;
     const captor = players.find((player) => player.id === category.capturedBy) ?? null;
     const previewingPlayers = players.filter((player) => matchView?.previewSelections[player.id] === category.id);
     const canChooseCategory = matchView?.phase === 'battle_path' && selfId === matchView.activePlayer && !category.capturedBy;
 
     return (
-      <motion.button
+      <BoardCategoryCard
         key={category.id}
-        type="button"
-        initial={{ scale: 0.94, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ delay: index * 0.05 }}
-        className={cn(
-          'absolute -translate-x-1/2 -translate-y-1/2 rounded-[2rem] bg-white px-4 py-3 text-left transition-all duration-200',
-          previewingPlayers.length === 2 ? 'border-2 border-duo-purple shadow-[-4px_4px_0px_0px_#ce82ff]' :
-          previewingPlayers.length === 1 ? 'border-2 border-gray-300 shadow-[-4px_4px_0px_0px_#d1d5db]' :
-          'border-2 border-gray-200 shadow-[-4px_4px_0px_0px_#e5e7eb]',
-          !category.capturedBy && 'hover:border-duo-blue hover:shadow-[-4px_4px_0px_0px_#1cb0f6] active:shadow-[0_0_0_0_transparent] active:mt-[4px] active:-ml-[4px]',
-          category.capturedBy && 'border-transparent shadow-none opacity-80'
-        )}
-        style={{
-          top,
-          left,
-          width: '15rem',
-          backgroundColor: captor ? `${captor.color}14` : undefined,
-        }}
+        category={category}
+        index={index}
+        captor={captor}
+        previewingPlayers={previewingPlayers}
+        ownerPillLabel={captor ? `${captor.name} owns it` : ownerLabel(category, players)}
+        statusText={matchView?.phase === 'battle_path' ? (category.capturedBy ? 'Log' : canChooseCategory ? 'Choose' : 'Preview') : 'Preview'}
         onClick={() => openPreview(category.id)}
-      >
-        {previewingPlayers.length > 0 && (
-          <div className="mb-2 flex items-center gap-1">
-            {previewingPlayers.map((player) => (
-              <span key={player.id} className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: player.color }} />
-            ))}
-            <span className="text-[9px] font-black uppercase tracking-[0.18em] text-gray-400">
-              {previewingPlayers.length === 2 ? 'Both Looking' : 'Previewing'}
-            </span>
-          </div>
-        )}
-
-        <div className="flex items-start gap-3">
-          <div
-            className={cn(
-              'flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 text-lg font-black shadow-sm',
-              captor ? 'border-white text-white' : 'border-gray-200 bg-gray-50 text-gray-400',
-            )}
-            style={captor ? { backgroundColor: captor.color } : undefined}
-          >
-            {captor ? <Play className="h-5 w-5 fill-current" /> : index + 1}
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-black text-gray-800">{category.name || 'Empty Category Slot'}</p>
-            <p className="mt-1 line-clamp-2 text-xs font-bold leading-relaxed text-gray-500">
-              {category.description || 'Waiting for a worthy premise.'}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <span
-            className={cn(
-              'rounded-full px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em]',
-              captor ? 'bg-white/75 text-gray-700' : ownerPlayer ? 'text-white' : 'bg-gray-100 text-gray-500',
-            )}
-            style={ownerPlayer && !captor ? { backgroundColor: ownerPlayer.color } : undefined}
-          >
-            {captor ? `${captor.name} owns it` : ownerLabel(category, players)}
-          </span>
-
-          {matchView?.phase === 'battle_path' && (
-            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">
-              {canChooseCategory ? 'Choose' : category.capturedBy ? 'Captured' : 'Preview'}
-            </span>
-          )}
-        </div>
-      </motion.button>
+      />
     );
   };
 
@@ -670,18 +629,18 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
     <motion.div key={phase} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col">
       {renderSystemBanner()}
 
+      {phase === 'battle_path' && activeChooser && <StickyStatusPill label="Next:" value={activeChooser.name} color={activeChooser.color} />}
+
       <div className="shrink-0 pb-4 text-center">
         <h2 className="text-3xl font-black text-gray-800">{phase === 'category_review' ? 'Review The Board' : 'Pick A Category'}</h2>
         <p className="mt-2 text-sm font-bold text-gray-500">
           {phase === 'category_review'
             ? 'Preview any category. When both players are satisfied, lock in and begin the match.'
-            : selfId === matchView?.activePlayer
-              ? 'Choose an uncaptured category. Both players will be pulled into the same writing screen.'
-              : `${nextPlayer?.name ?? 'Your opponent'} is choosing the next category.`}
+            : 'Captured categories reopen the ruling. Uncaptured categories open the category brief before the round begins.'}
         </p>
       </div>
 
-      <div className="pb-8 relative">
+      <div className="pb-8">
         <div className="relative mx-auto w-full max-w-[20rem]" style={{ height: boardHeight }}>
           <svg className="pointer-events-none absolute left-0 top-0 h-full w-full text-gray-300" viewBox={`0 0 ${BOARD_WIDTH} ${boardHeight}`} preserveAspectRatio="none">
             <path d={boardPath} fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="10 10" />
@@ -762,7 +721,7 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
     }
 
     return (
-      <motion.div key="RESULTS" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col overflow-hidden">
+      <motion.div key="RESULTS" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col">
         {renderSystemBanner()}
 
         <div className="shrink-0 pb-4 text-center">
@@ -770,11 +729,11 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
           <p className="mt-2 text-sm font-bold text-gray-500">Review the ruling, then both players continue.</p>
         </div>
 
-        <div className="duo-scrollbar flex-1 overflow-y-auto pb-6">
+        <div className="pb-6">
           <JudgingLogPanel className="w-full" category={activeCategory} logs={currentResultLogs} players={players} />
         </div>
 
-        <div className="shrink-0 border-t-2 border-gray-100 bg-duo-gray/90 pt-4">
+        <div className="mt-auto shrink-0 border-t-2 border-gray-100 bg-duo-gray/90 pt-4">
           <Button onClick={() => socket.emit('results:continue')} disabled={matchView?.resultLockedPlayers.includes(selfId)}>
             {matchView?.resultLockedPlayers.includes(selfId) ? 'Continue Locked' : 'Continue'}
           </Button>
@@ -787,7 +746,7 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
     const winningPlayer = players.find((player) => player.id === matchView?.winnerId) ?? null;
 
     return (
-      <motion.div key="WIN" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col overflow-hidden">
+      <motion.div key="WIN" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col">
         {renderSystemBanner()}
 
         <div className="mb-6 shrink-0 text-center">
@@ -798,7 +757,7 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
           </p>
         </div>
 
-        <div className="duo-scrollbar flex-1 overflow-y-auto space-y-8 pb-10">
+        <div className="space-y-8 pb-10">
           {categories.map((category, index) => (
             <section key={category.id} className="space-y-3">
               <div className="flex items-center justify-between px-1">
@@ -833,7 +792,7 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
         />
       )}
 
-      <main className={cn('relative z-10 flex-1 overflow-y-auto px-6 pb-6', matchView ? (matchView.phase === 'battle_path' ? 'pt-24' : 'pt-20') : 'pt-10')}>
+      <main className={cn('relative z-10 flex-1 overflow-y-auto px-6 pb-6', matchView ? 'pt-20' : 'pt-10')}>
         <AnimatePresence mode="wait">
           {!matchView && renderHomeScreen()}
           {matchView?.phase === 'category_setup' && renderCategorySetup()}
@@ -847,56 +806,19 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
       </main>
 
       {previewCategory && matchView && (matchView.phase === 'category_review' || matchView.phase === 'battle_path') && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-gray-900/40 px-6 py-6 backdrop-blur-sm"
-        >
-          <motion.div
-            initial={{ scale: 0.94, y: 20 }}
-            animate={{ scale: 1, y: 0 }}
-            exit={{ scale: 0.94, y: 20 }}
-            className="mx-auto flex max-h-[calc(100vh-3rem)] w-full max-w-sm flex-col overflow-hidden rounded-[2rem] border-2 border-white bg-white shadow-2xl"
-          >
-            <div className="flex items-center justify-between border-b-2 border-gray-100 bg-gray-50 px-4 py-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.22em] text-gray-400">Preview</p>
-                <h3 className="mt-1 truncate text-xl font-black text-gray-800">{previewCategory.name}</h3>
-              </div>
+        <CategoryBoardModal
+          category={previewCategory}
+          players={players}
+          onClose={closePreview}
+          primaryActionLabel={matchView.phase === 'battle_path' && selfId === matchView.activePlayer && !previewCategory.capturedBy ? 'Choose Category' : 'Close'}
+          onPrimaryAction={() => {
+            if (matchView.phase === 'battle_path' && selfId === matchView.activePlayer && !previewCategory.capturedBy) {
+              socket.emit('battle:select', { categoryId: previewCategory.id });
+            }
 
-              <button onClick={closePreview} className="rounded-full p-2 text-gray-400 transition-all hover:bg-gray-200 hover:text-gray-600">
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-
-            <div className="duo-scrollbar flex-1 space-y-4 overflow-y-auto p-5">
-              <div className="rounded-[1.75rem] border-2 border-gray-100 bg-white p-5 shadow-sm">
-                <p className="text-xs font-black uppercase tracking-[0.22em] text-gray-400">Description</p>
-                <p className="mt-3 whitespace-pre-wrap break-words font-bold leading-relaxed text-gray-700">{previewCategory.description}</p>
-              </div>
-            </div>
-
-            <div className="flex shrink-0 gap-3 border-t-2 border-gray-100 bg-white px-5 py-5">
-              <Button variant="ghost" className="border-2 border-gray-200 bg-white" onClick={closePreview}>
-                Back
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => {
-                  if (matchView.phase === 'battle_path' && selfId === matchView.activePlayer && !previewCategory.capturedBy) {
-                    socket.emit('battle:select', { categoryId: previewCategory.id });
-                    setPreviewCategoryId(null);
-                  } else {
-                    closePreview();
-                  }
-                }}
-              >
-                Choose
-              </Button>
-            </div>
-          </motion.div>
-        </motion.div>
+            closePreview();
+          }}
+        />
       )}
 
       {editingCategory && (
