@@ -6,7 +6,7 @@ import { DEFAULT_MODEL_ID, MODEL_OPTIONS, isValidModelId } from '../../shared/mo
 import { Button, cn } from './Button';
 import { Header } from './Header';
 import { JudgingLogPanel } from './JudgingLogPanel';
-import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, buildBoardPath, getCapturedScore, otherPlayerId, toConnectedMatchPlayers } from '../lib/gameShared';
+import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, BOARD_SWAY, buildBoardPath, getCapturedScore, otherPlayerId, toConnectedMatchPlayers } from '../lib/gameShared';
 import { fetchPrompt } from '../lib/prompts';
 import type { Category, JudgingResult, MatchPlayer, Player, PlayerId, PromptLog } from '../types';
 

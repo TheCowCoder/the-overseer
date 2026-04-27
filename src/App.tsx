@@ -6,7 +6,7 @@ import { Button, cn } from './components/Button';
 import { Header } from './components/Header';
 import { JudgingLogPanel } from './components/JudgingLogPanel';
 import { DEFAULT_MODEL_ID, MODEL_OPTIONS, isValidModelId } from '../shared/modelOptions.js';
-import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, buildBoardPath } from './lib/gameShared';
+import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, BOARD_SWAY, buildBoardPath } from './lib/gameShared';
 import { socket } from './lib/socket';
 import type { Category, MatchView, PlayerId } from './types';
 

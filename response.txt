@@ -1,4 +1,4 @@
-To fix the `BOARD_SWAY` reference error and implement the requested layout and UI changes, we need to update the imports and logic in the main app files.
+Here are the updated files to completely fix the layout alignments, add the Duolingo 3D button hover states, streamline the header UI, and fix the `BOARD_SWAY` reference error.
 
 ### src/lib/gameShared.ts
 ```typescript
@@ -14,7 +14,6 @@ export const buildBoardPath = (boardHeight: number) => {
 
   for (let y = 0; y <= boardHeight; y += 5) {
     const yRelative = y - BOARD_TOP_OFFSET;
-    // We use cos so that yRelative = 0 (the first card) starts at a peak (cos(0)=1)
     const x = BOARD_WIDTH / 2 + Math.cos((yRelative * Math.PI) / BOARD_STEP) * BOARD_SWAY;
     points.push(`${x},${y}`);
   }
@@ -112,23 +111,21 @@ export const Header = ({
 
   return (
     <div className="fixed top-0 z-40 w-full max-w-md rounded-b-[2rem] border-b-2 border-gray-100 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-md">
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,8rem)_minmax(0,1fr)] items-center gap-2">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,10.75rem)_minmax(0,1fr)] items-center gap-2">
         {renderPlayer(leftPlayer)}
 
         {modelOptions && selectedModelId && onModelChange ? (
-          <div className="flex justify-center px-0">
-            <select
-              value={selectedModelId}
-              onChange={(event) => onModelChange(event.target.value)}
-              className="w-full appearance-none rounded-full border border-gray-200 bg-white py-1.5 text-center text-[10px] font-black tracking-[0.14em] text-gray-600 shadow-sm outline-none transition-all hover:border-gray-300 focus:border-duo-blue"
-            >
-              {modelOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={selectedModelId}
+            onChange={(event) => onModelChange(event.target.value)}
+            className="w-full appearance-none rounded-full border border-gray-200 bg-white py-1.5 px-0 text-center text-[10px] font-black tracking-[0.14em] text-gray-600 shadow-sm outline-none transition-all hover:border-gray-300 focus:border-duo-blue"
+          >
+            {modelOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         ) : (
           <div className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-center text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 shadow-sm">
             {centerLabel}
@@ -140,6 +137,38 @@ export const Header = ({
     </div>
   );
 };
+```
+
+### shared/modelOptions.js
+```javascript
+export const MODEL_OPTIONS = [
+  { id: 'gemini-3.1-pro-preview', label: '3.1 Pro' },
+  { id: 'gemini-3-flash-preview', label: '3 Flash' },
+  { id: 'gemini-2.5-pro', label: '2.5 Pro' },
+  { id: 'gemini-2.5-flash', label: '2.5 Flash' },
+];
+
+export const DEFAULT_MODEL_ID = 'gemini-3-flash-preview';
+
+export const isValidModelId = (value) => MODEL_OPTIONS.some((option) => option.id === value);
+```
+
+### shared/modelOptions.ts
+```typescript
+export type ModelId =
+  | 'gemini-3.1-pro-preview'
+  | 'gemini-3-flash-preview'
+  | 'gemini-2.5-pro'
+  | 'gemini-2.5-flash';
+
+export interface ModelOption {
+  id: ModelId;
+  label: string;
+}
+
+export const MODEL_OPTIONS: ModelOption[];
+export const DEFAULT_MODEL_ID: ModelId;
+export const isValidModelId: (value: string) => value is ModelId;
 ```
 
 ### src/App.tsx
@@ -345,7 +374,6 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
   const players = matchView?.players ?? [];
   const selfId = matchView?.selfId ?? 'player_1';
   const selfPlayer = players.find((player) => player.id === selfId) ?? null;
-  const nextPlayer = players.find((player) => player.id === matchView?.activePlayer) ?? null;
   const activeCategory = categories.find((category) => category.id === matchView?.activeCategoryId) ?? null;
   const previewCategory = categories.find((category) => category.id === previewCategoryId) ?? null;
   const editingCategory = categories.find((category) => category.id === editingCategoryId) ?? null;
@@ -589,83 +617,90 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
     const top = BOARD_TOP_OFFSET + index * BOARD_STEP;
     const yRelative = top - BOARD_TOP_OFFSET;
     const left = BOARD_WIDTH / 2 + Math.cos((yRelative * Math.PI) / BOARD_STEP) * BOARD_SWAY;
-    
     const ownerPlayer = category.ownerId === 'ai' ? null : players.find((player) => player.id === category.ownerId) ?? null;
     const captor = players.find((player) => player.id === category.capturedBy) ?? null;
     const previewingPlayers = players.filter((player) => matchView?.previewSelections[player.id] === category.id);
     const canChooseCategory = matchView?.phase === 'battle_path' && selfId === matchView.activePlayer && !category.capturedBy;
 
     return (
-      <motion.button
+      <div 
         key={category.id}
-        type="button"
-        initial={{ scale: 0.94, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ delay: index * 0.05 }}
-        className={cn(
-          'absolute -translate-x-1/2 -translate-y-1/2 rounded-[2rem] bg-white px-4 py-3 text-left transition-all duration-200',
-          previewingPlayers.length === 2 ? 'border-2 border-duo-purple shadow-[-4px_4px_0px_0px_#ce82ff]' :
-          previewingPlayers.length === 1 ? 'border-2 border-gray-300 shadow-[-4px_4px_0px_0px_#d1d5db]' :
-          'border-2 border-gray-200 shadow-[-4px_4px_0px_0px_#e5e7eb]',
-          !category.capturedBy && 'hover:border-duo-blue hover:shadow-[-4px_4px_0px_0px_#1cb0f6] active:shadow-[0_0_0_0_transparent] active:mt-[4px] active:-ml-[4px]',
-          category.capturedBy && 'border-transparent shadow-none opacity-80'
-        )}
-        style={{
-          top,
-          left,
-          width: '15rem',
-          backgroundColor: captor ? `${captor.color}14` : undefined,
+        className="absolute z-10"
+        style={{ 
+          top, 
+          left, 
+          transform: 'translate(-50%, -50%)', 
+          width: '15rem' 
         }}
-        onClick={() => openPreview(category.id)}
       >
-        {previewingPlayers.length > 0 && (
-          <div className="mb-2 flex items-center gap-1">
-            {previewingPlayers.map((player) => (
-              <span key={player.id} className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: player.color }} />
-            ))}
-            <span className="text-[9px] font-black uppercase tracking-[0.18em] text-gray-400">
-              {previewingPlayers.length === 2 ? 'Both Looking' : 'Previewing'}
-            </span>
-          </div>
-        )}
-
-        <div className="flex items-start gap-3">
-          <div
-            className={cn(
-              'flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 text-lg font-black shadow-sm',
-              captor ? 'border-white text-white' : 'border-gray-200 bg-gray-50 text-gray-400',
-            )}
-            style={captor ? { backgroundColor: captor.color } : undefined}
-          >
-            {captor ? <Play className="h-5 w-5 fill-current" /> : index + 1}
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-black text-gray-800">{category.name || 'Empty Category Slot'}</p>
-            <p className="mt-1 line-clamp-2 text-xs font-bold leading-relaxed text-gray-500">
-              {category.description || 'Waiting for a worthy premise.'}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <span
-            className={cn(
-              'rounded-full px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em]',
-              captor ? 'bg-white/75 text-gray-700' : ownerPlayer ? 'text-white' : 'bg-gray-100 text-gray-500',
-            )}
-            style={ownerPlayer && !captor ? { backgroundColor: ownerPlayer.color } : undefined}
-          >
-            {captor ? `${captor.name} owns it` : ownerLabel(category, players)}
-          </span>
-
-          {matchView?.phase === 'battle_path' && (
-            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">
-              {canChooseCategory ? 'Choose' : category.capturedBy ? 'Captured' : 'Preview'}
-            </span>
+        <motion.button
+          type="button"
+          initial={{ scale: 0.94, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ delay: index * 0.05 }}
+          className={cn(
+            'w-full rounded-[2rem] bg-white px-4 py-3 text-left transition-all duration-150',
+            'border-2',
+            previewingPlayers.length === 2 ? 'border-duo-purple shadow-[-4px_4px_0px_0px_#ce82ff]' :
+            previewingPlayers.length === 1 ? 'border-gray-300 shadow-[-4px_4px_0px_0px_#d1d5db]' :
+            'border-gray-200 shadow-[-4px_4px_0px_0px_#e5e7eb]',
+            !category.capturedBy && 'hover:border-duo-blue hover:shadow-[-4px_4px_0px_0px_#1cb0f6] active:shadow-[0_0_0_0_transparent] active:translate-y-[4px] active:-translate-x-[4px]',
+            category.capturedBy && 'border-transparent shadow-none opacity-80'
           )}
-        </div>
-      </motion.button>
+          style={{
+            backgroundColor: captor ? `${captor.color}14` : undefined,
+          }}
+          onClick={() => openPreview(category.id)}
+        >
+          {previewingPlayers.length > 0 && (
+            <div className="mb-2 flex items-center gap-1">
+              {previewingPlayers.map((player) => (
+                <span key={player.id} className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: player.color }} />
+              ))}
+              <span className="text-[9px] font-black uppercase tracking-[0.18em] text-gray-400">
+                {previewingPlayers.length === 2 ? 'Both Looking' : 'Previewing'}
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-start gap-3">
+            <div
+              className={cn(
+                'flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 text-lg font-black shadow-sm',
+                captor ? 'border-white text-white' : 'border-gray-200 bg-gray-50 text-gray-400',
+              )}
+              style={captor ? { backgroundColor: captor.color } : undefined}
+            >
+              {captor ? <Play className="h-5 w-5 fill-current" /> : index + 1}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-base font-black text-gray-800">{category.name || 'Empty Category Slot'}</p>
+              <p className="mt-1 line-clamp-2 text-xs font-bold leading-relaxed text-gray-500">
+                {category.description || 'Waiting for a worthy premise.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <span
+              className={cn(
+                'rounded-full px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em]',
+                captor ? 'bg-white/75 text-gray-700' : ownerPlayer ? 'text-white' : 'bg-gray-100 text-gray-500',
+              )}
+              style={ownerPlayer && !captor ? { backgroundColor: ownerPlayer.color } : undefined}
+            >
+              {captor ? `${captor.name} owns it` : ownerLabel(category, players)}
+            </span>
+
+            {matchView?.phase === 'battle_path' && (
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">
+                {canChooseCategory ? 'Choose' : category.capturedBy ? 'Captured' : 'Preview'}
+              </span>
+            )}
+          </div>
+        </motion.button>
+      </div>
     );
   };
 
@@ -823,11 +858,11 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
             ? 'Preview any category. When both players are satisfied, lock in and begin the match.'
             : selfId === matchView?.activePlayer
               ? 'Choose an uncaptured category. Both players will be pulled into the same writing screen.'
-              : `${nextPlayer?.name ?? 'Your opponent'} is choosing the next category.`}
+              : `${matchView?.players.find(p => p.id === matchView?.activePlayer)?.name ?? 'Your opponent'} is choosing the next category.`}
         </p>
       </div>
 
-      <div className="pb-8 relative">
+      <div className="pb-8">
         <div className="relative mx-auto w-full max-w-[20rem]" style={{ height: boardHeight }}>
           <svg className="pointer-events-none absolute left-0 top-0 h-full w-full text-gray-300" viewBox={`0 0 ${BOARD_WIDTH} ${boardHeight}`} preserveAspectRatio="none">
             <path d={boardPath} fill="none" stroke="currentColor" strokeWidth="4" strokeDasharray="10 10" />
@@ -1024,9 +1059,6 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
             </div>
 
             <div className="flex shrink-0 gap-3 border-t-2 border-gray-100 bg-white px-5 py-5">
-              <Button variant="ghost" className="border-2 border-gray-200 bg-white" onClick={closePreview}>
-                Back
-              </Button>
               <Button
                 variant="primary"
                 onClick={() => {
@@ -1038,7 +1070,7 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
                   }
                 }}
               >
-                Choose
+                {matchView.phase === 'battle_path' && selfId === matchView.activePlayer && !previewCategory.capturedBy ? 'Choose Category' : 'Close'}
               </Button>
             </div>
           </motion.div>
@@ -1521,52 +1553,59 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
     const captor = players.find((player) => player.id === category.capturedBy) ?? null;
 
     return (
-      <motion.button
+      <div 
         key={category.id}
-        type="button"
-        initial={{ scale: 0.94, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ delay: index * 0.05 }}
-        className={cn(
-          'absolute -translate-x-1/2 -translate-y-1/2 rounded-[2rem] bg-white px-4 py-3 text-left transition-all duration-200',
-          'border-2 border-gray-200 shadow-[-4px_4px_0px_0px_#e5e7eb]',
-          !category.capturedBy && 'hover:border-duo-blue hover:shadow-[-4px_4px_0px_0px_#1cb0f6] active:shadow-[0_0_0_0_transparent] active:mt-[4px] active:-ml-[4px]',
-          category.capturedBy && 'border-transparent shadow-none opacity-80'
-        )}
-        style={{
-          top,
-          left,
-          width: '15rem',
-          backgroundColor: captor ? `${captor.color}14` : undefined,
+        className="absolute z-10"
+        style={{ 
+          top, 
+          left, 
+          transform: 'translate(-50%, -50%)', 
+          width: '15rem' 
         }}
-        onClick={() => handleStartTurn(category)}
       >
-        <div className="flex items-start gap-3">
-          <div
-            className={cn(
-              'flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 text-lg font-black shadow-sm',
-              captor ? 'border-white text-white' : 'border-gray-200 bg-gray-50 text-gray-400',
-            )}
-            style={captor ? { backgroundColor: captor.color } : undefined}
-          >
-            {captor ? <Play className="h-5 w-5 fill-current" /> : index + 1}
+        <motion.button
+          type="button"
+          initial={{ scale: 0.94, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ delay: index * 0.05 }}
+          className={cn(
+            'w-full rounded-[2rem] bg-white px-4 py-3 text-left transition-all duration-150',
+            'border-2 border-gray-200 shadow-[-4px_4px_0px_0px_#e5e7eb]',
+            !category.capturedBy && 'hover:border-duo-blue hover:shadow-[-4px_4px_0px_0px_#1cb0f6] active:shadow-[0_0_0_0_transparent] active:translate-y-[4px] active:-translate-x-[4px]',
+            category.capturedBy && 'border-transparent shadow-none opacity-80'
+          )}
+          style={{
+            backgroundColor: captor ? `${captor.color}14` : undefined,
+          }}
+          onClick={() => handleStartTurn(category)}
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className={cn(
+                'flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 text-lg font-black shadow-sm',
+                captor ? 'border-white text-white' : 'border-gray-200 bg-gray-50 text-gray-400',
+              )}
+              style={captor ? { backgroundColor: captor.color } : undefined}
+            >
+              {captor ? <Play className="h-5 w-5 fill-current" /> : index + 1}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-base font-black text-gray-800">{category.name}</p>
+              <p className="mt-1 line-clamp-2 text-xs font-bold leading-relaxed text-gray-500">{category.description}</p>
+            </div>
           </div>
 
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-black text-gray-800">{category.name}</p>
-            <p className="mt-1 line-clamp-2 text-xs font-bold leading-relaxed text-gray-500">{category.description}</p>
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <span className={cn('rounded-full px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em]', captor ? 'bg-white/75 text-gray-700' : 'bg-gray-100 text-gray-500')}>
+              {captor ? `${captor.name} owns it` : category.createdBy === 'ai' ? 'Overseer Pick' : 'Open Category'}
+            </span>
+            <span className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">
+              {category.capturedBy ? 'Captured' : 'Choose'}
+            </span>
           </div>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <span className={cn('rounded-full px-3 py-1 text-[9px] font-black uppercase tracking-[0.2em]', captor ? 'bg-white/75 text-gray-700' : 'bg-gray-100 text-gray-500')}>
-            {captor ? `${captor.name} owns it` : category.createdBy === 'ai' ? 'Overseer Pick' : 'Open Category'}
-          </span>
-          <span className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">
-            {category.capturedBy ? 'Captured' : 'Choose'}
-          </span>
-        </div>
-      </motion.button>
+        </motion.button>
+      </div>
     );
   };
 

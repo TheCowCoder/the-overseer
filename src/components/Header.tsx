@@ -73,21 +73,23 @@ export const Header = ({
 
   return (
     <div className="fixed top-0 z-40 w-full max-w-md rounded-b-[2rem] border-b-2 border-gray-100 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-md">
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,10.75rem)_minmax(0,1fr)] items-center gap-2">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,8rem)_minmax(0,1fr)] items-center gap-2">
         {renderPlayer(leftPlayer)}
 
         {modelOptions && selectedModelId && onModelChange ? (
-          <select
-            value={selectedModelId}
-            onChange={(event) => onModelChange(event.target.value)}
-            className="w-full appearance-none rounded-full border border-gray-200 bg-white py-1.5 text-center text-[10px] font-black tracking-[0.14em] text-gray-600 shadow-sm outline-none transition-all hover:border-gray-300 focus:border-duo-blue"
-          >
-            {modelOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <div className="flex justify-center px-0">
+            <select
+              value={selectedModelId}
+              onChange={(event) => onModelChange(event.target.value)}
+              className="w-full appearance-none rounded-full border border-gray-200 bg-white py-1.5 text-center text-[10px] font-black tracking-[0.14em] text-gray-600 shadow-sm outline-none transition-all hover:border-gray-300 focus:border-duo-blue"
+            >
+              {modelOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
         ) : (
           <div className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-center text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 shadow-sm">
             {centerLabel}
