@@ -6,15 +6,24 @@
   font-family: 'Nunito', sans-serif;
 }
 
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
 body {
+  min-height: 100vh;
   margin: 0;
   padding: 0;
   background-color: #f3f4f6; /* A visible light gray background */
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
 }
 
 #root {
-  height: 100vh;
-  width: 100vw;
+  min-height: 100vh;
+  width: 100%;
 }
 
 .duo-scrollbar {

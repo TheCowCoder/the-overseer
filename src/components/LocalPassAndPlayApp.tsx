@@ -760,7 +760,7 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
   const showHeader = players.length === 2 && screen !== 'ONBOARDING' && screen !== 'HANDOFF';
 
   return (
-    <div className="relative mx-auto flex min-h-screen w-full max-w-md flex-col overflow-x-hidden bg-duo-gray shadow-2xl md:my-[2.5vh] md:min-h-[95vh] md:rounded-3xl">
+    <div className="relative mx-auto flex min-h-screen min-h-[100dvh] w-full max-w-md flex-col overflow-x-hidden bg-duo-gray shadow-2xl md:my-[2.5vh] md:min-h-[95vh] md:rounded-3xl">
       {showHeader && (
         <Header
           players={headerPlayers}
@@ -776,7 +776,7 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
         />
       )}
 
-      <main className={cn('relative z-10 flex-1 px-6 pb-6', showHeader ? 'pt-20' : 'pt-10')}>
+      <main className={cn('relative z-10 flex-1 px-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]', showHeader ? 'pt-[calc(env(safe-area-inset-top)+5rem)]' : 'pt-10')}>
         <AnimatePresence mode="wait">
           {screen === 'ONBOARDING' && renderOnboarding()}
           {screen === 'CATEGORY_CREATION' && renderCategoryCreation()}
@@ -812,13 +812,17 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 p-6 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-gray-900/40 px-6 py-6 backdrop-blur-sm"
+            style={{
+              paddingTop: 'calc(env(safe-area-inset-top) + 1rem)',
+              paddingBottom: 'calc(env(safe-area-inset-bottom) + 1rem)',
+            }}
           >
             <motion.div
               initial={{ scale: 0.94, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.94, y: 20 }}
-              className="flex w-full max-w-sm flex-col overflow-hidden rounded-[2rem] border-2 border-white bg-white shadow-2xl"
+              className="my-auto flex w-full max-w-sm flex-col overflow-hidden rounded-[2rem] border-2 border-white bg-white shadow-2xl"
             >
               <div className="flex items-center justify-between border-b-2 border-gray-100 bg-gray-50 px-4 py-4">
                 <div>

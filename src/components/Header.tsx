@@ -73,7 +73,10 @@ export const Header = ({
   };
 
   return (
-    <div className="fixed top-0 z-40 w-full max-w-md rounded-b-[2rem] border-b-2 border-gray-100 bg-white/90 px-4 py-3 shadow-sm backdrop-blur-md">
+    <div
+      className="fixed left-1/2 top-0 z-40 w-full max-w-md -translate-x-1/2 rounded-b-[2rem] border-b-2 border-gray-100 bg-white/90 px-4 pb-3 shadow-sm backdrop-blur-md"
+      style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)' }}
+    >
       <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
         {renderPlayer(leftPlayer)}
 

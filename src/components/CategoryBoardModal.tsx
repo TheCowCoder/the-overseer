@@ -22,6 +22,10 @@ export const CategoryBoardModal = ({ category, players, onClose, primaryActionLa
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-gray-900/40 px-6 py-6 backdrop-blur-sm"
+      style={{
+        paddingTop: 'calc(env(safe-area-inset-top) + 1rem)',
+        paddingBottom: 'calc(env(safe-area-inset-bottom) + 1rem)',
+      }}
     >
       <motion.div
         initial={{ scale: 0.94, y: 20 }}

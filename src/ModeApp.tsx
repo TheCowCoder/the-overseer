@@ -20,8 +20,8 @@ export default function ModeApp() {
   }
 
   return (
-    <div className="relative mx-auto flex h-screen w-full max-w-md flex-col overflow-x-hidden bg-duo-gray shadow-2xl md:mt-[2.5vh] md:h-[95vh] md:rounded-3xl">
-      <main className="relative z-10 flex flex-1 flex-col justify-center overflow-y-auto px-6 py-10">
+    <div className="relative mx-auto flex min-h-screen min-h-[100dvh] w-full max-w-md flex-col overflow-x-hidden bg-duo-gray shadow-2xl md:my-[2.5vh] md:min-h-[95vh] md:rounded-3xl">
+      <main className="relative z-10 flex flex-1 flex-col justify-center px-6 pt-10 pb-[calc(env(safe-area-inset-bottom)+2.5rem)]">
         <AnimatePresence mode="wait">
           <motion.div key="MODE_HOME" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} className="flex min-h-full flex-col justify-center gap-6">
             <div className="space-y-3 text-center">
