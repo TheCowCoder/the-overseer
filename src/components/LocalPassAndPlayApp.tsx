@@ -9,7 +9,7 @@ import { CategoryBoardModal } from './CategoryBoardModal';
 import { Header } from './Header';
 import { JudgingLogPanel } from './JudgingLogPanel';
 import { StickyStatusPill } from './StickyStatusPill';
-import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, buildBoardPath, getCapturedScore, otherPlayerId, toConnectedMatchPlayers } from '../lib/gameShared';
+import { BOARD_STEP, BOARD_TOP_OFFSET, BOARD_WIDTH, MOBILE_STAGE_CENTER_MIN_HEIGHT, buildBoardPath, getCapturedScore, otherPlayerId, toConnectedMatchPlayers } from '../lib/gameShared';
 import { fetchPrompt } from '../lib/prompts';
 import type { Category, JudgingResult, MatchPlayer, Player, PlayerId, PromptLog } from '../types';
 
@@ -685,7 +685,7 @@ export const LocalPassAndPlayApp = ({ onBack }: LocalPassAndPlayAppProps) => {
   };
 
   const renderResolving = () => (
-    <motion.div key="RESOLVING" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col items-center justify-center gap-6 text-center">
+    <motion.div key="RESOLVING" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center gap-6 text-center" style={{ minHeight: MOBILE_STAGE_CENTER_MIN_HEIGHT }}>
       <div className="relative h-24 w-24">
         <div className="absolute inset-0 rounded-full border-8 border-duo-purple/30" />
         <div className="absolute inset-0 rounded-full border-8 border-duo-purple border-t-transparent animate-spin" />

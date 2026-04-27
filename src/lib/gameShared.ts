@@ -4,6 +4,7 @@ export const BOARD_WIDTH = 320;
 export const BOARD_SWAY = 50;
 export const BOARD_TOP_OFFSET = 120;
 export const BOARD_STEP = 160;
+export const MOBILE_STAGE_CENTER_MIN_HEIGHT = 'calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 6.5rem)';
 
 export const buildBoardPath = (boardHeight: number) => {
   const points: string[] = [];
