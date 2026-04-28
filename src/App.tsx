@@ -81,6 +81,7 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
   const [previewCategoryId, setPreviewCategoryId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [selectedModelId, setSelectedModelId] = useState(DEFAULT_MODEL_ID);
+  const [resolvingElapsedSeconds, setResolvingElapsedSeconds] = useState(0);
 
   const typingTimeoutRef = useRef<number | null>(null);
   const categoryTypingTimeoutRef = useRef<number | null>(null);
@@ -211,6 +212,22 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
     };
   }, []);
 
+  useEffect(() => {
+    if (matchView?.phase !== 'resolving') {
+      setResolvingElapsedSeconds(0);
+      return;
+    }
+
+    setResolvingElapsedSeconds(0);
+    const intervalId = window.setInterval(() => {
+      setResolvingElapsedSeconds((currentSeconds) => currentSeconds + 1);
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [matchView?.phase, matchView?.activeCategoryId]);
+
   const categories = matchView?.categories ?? [];
   const players = matchView?.players ?? [];
   const selfId = matchView?.selfId ?? 'player_1';
@@ -279,6 +296,12 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
   }, [matchView, players]);
 
   const disconnectedPlayerIds = players.filter((player) => !player.connected).map((player) => player.id);
+  const resolvingModelLabel = MODEL_OPTIONS.find((option) => option.id === (matchView?.modelId ?? selectedModelId))?.label ?? 'Active Model';
+  const resolvingStatusLabel = resolvingElapsedSeconds >= 20
+    ? `${resolvingModelLabel} is still judging. High-thinking rounds can take a little longer.`
+    : resolvingElapsedSeconds >= 8
+      ? `${resolvingModelLabel} is thinking through the rubric now.`
+      : 'Both prompts are locked. The server is resolving the round now.';
 
   const centerLabel = useMemo(() => {
     if (!matchView) {
@@ -743,9 +766,17 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
         <div className="absolute inset-0 rounded-full border-8 border-duo-purple/30" />
         <div className="absolute inset-0 rounded-full border-8 border-duo-purple border-t-transparent animate-spin" />
       </div>
-      <div className="space-y-2">
+      <div className="space-y-3">
         <h2 className="text-3xl font-black text-gray-800">The Overseer Judges...</h2>
-        <p className="text-sm font-bold text-gray-500">Both prompts are locked. The server is resolving the round now.</p>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <span className="rounded-full border border-duo-purple/30 bg-duo-purple/10 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-duo-purple">
+            {resolvingModelLabel}
+          </span>
+          <span className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">
+            {resolvingElapsedSeconds}s elapsed
+          </span>
+        </div>
+        <p className="mx-auto max-w-sm text-sm font-bold text-gray-500">{resolvingStatusLabel}</p>
       </div>
     </motion.div>
   );

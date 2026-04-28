@@ -17,6 +17,7 @@ const categorySchema = {
     category_name: { type: 'string' },
     category_description: { type: 'string' },
   },
+  propertyOrdering: ['category_name', 'category_description'],
   required: ['category_name', 'category_description'],
 };
 
@@ -31,6 +32,15 @@ const rubricScoreSchema = {
     elegance_of_prose: { type: 'integer' },
     impressiveness: { type: 'integer' },
   },
+  propertyOrdering: [
+    'wit',
+    'creativity',
+    'adherence_to_category',
+    'bonus_for_media_politics_references',
+    'effort',
+    'elegance_of_prose',
+    'impressiveness',
+  ],
   required: [
     'wit',
     'creativity',
@@ -60,6 +70,21 @@ const judgingSchema = {
     verdict_sentence: { type: 'string' },
     winner_id: { type: 'string', enum: ['player_1', 'player_2', 'tie'] },
   },
+  propertyOrdering: [
+    'wit',
+    'creativity',
+    'adherence_to_category',
+    'bonus_for_media_politics_references',
+    'effort',
+    'elegance_of_prose',
+    'impressiveness',
+    'player_1_scores',
+    'player_2_scores',
+    'player_1_feedback',
+    'player_2_feedback',
+    'verdict_sentence',
+    'winner_id',
+  ],
   required: [
     'wit',
     'creativity',
