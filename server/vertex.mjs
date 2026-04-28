@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,24 +11,25 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 const PROMPTS_DIR = path.join(ROOT_DIR, 'public', 'prompts');
 
 const categorySchema = {
-  type: Type.OBJECT,
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
   properties: {
-    category_name: { type: Type.STRING },
-    category_description: { type: Type.STRING },
+    category_name: { type: 'string' },
+    category_description: { type: 'string' },
   },
   required: ['category_name', 'category_description'],
 };
 
 const rubricScoreSchema = {
-  type: Type.OBJECT,
+  type: 'object',
   properties: {
-    wit: { type: Type.INTEGER },
-    creativity: { type: Type.INTEGER },
-    adherence_to_category: { type: Type.INTEGER },
-    bonus_for_media_politics_references: { type: Type.INTEGER },
-    effort: { type: Type.INTEGER },
-    elegance_of_prose: { type: Type.INTEGER },
-    impressiveness: { type: Type.INTEGER },
+    wit: { type: 'integer' },
+    creativity: { type: 'integer' },
+    adherence_to_category: { type: 'integer' },
+    bonus_for_media_politics_references: { type: 'integer' },
+    effort: { type: 'integer' },
+    elegance_of_prose: { type: 'integer' },
+    impressiveness: { type: 'integer' },
   },
   required: [
     'wit',
@@ -42,21 +43,22 @@ const rubricScoreSchema = {
 };
 
 const judgingSchema = {
-  type: Type.OBJECT,
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
   properties: {
-    wit: { type: Type.STRING },
-    creativity: { type: Type.STRING },
-    adherence_to_category: { type: Type.STRING },
-    bonus_for_media_politics_references: { type: Type.STRING },
-    effort: { type: Type.STRING },
-    elegance_of_prose: { type: Type.STRING },
-    impressiveness: { type: Type.STRING },
+    wit: { type: 'string' },
+    creativity: { type: 'string' },
+    adherence_to_category: { type: 'string' },
+    bonus_for_media_politics_references: { type: 'string' },
+    effort: { type: 'string' },
+    elegance_of_prose: { type: 'string' },
+    impressiveness: { type: 'string' },
     player_1_scores: rubricScoreSchema,
     player_2_scores: rubricScoreSchema,
-    player_1_feedback: { type: Type.STRING },
-    player_2_feedback: { type: Type.STRING },
-    verdict_sentence: { type: Type.STRING },
-    winner_id: { type: Type.STRING, enum: ['player_1', 'player_2', 'tie'] },
+    player_1_feedback: { type: 'string' },
+    player_2_feedback: { type: 'string' },
+    verdict_sentence: { type: 'string' },
+    winner_id: { type: 'string', enum: ['player_1', 'player_2', 'tie'] },
   },
   required: [
     'wit',
@@ -83,19 +85,37 @@ const defaultDescriptionPhrases = [
 
 let genAI = null;
 
+const getClientOptions = () => {
+  const apiKey = process.env.VERTEX_API_KEY?.trim();
+  const project = process.env.GOOGLE_CLOUD_PROJECT?.trim() || process.env.VERTEX_PROJECT?.trim();
+  const location = process.env.GOOGLE_CLOUD_LOCATION?.trim() || process.env.VERTEX_LOCATION?.trim();
+  const apiVersion = process.env.GOOGLE_GENAI_API_VERSION?.trim();
+
+  if (project && location) {
+    return {
+      vertexai: true,
+      project,
+      location,
+      ...(apiVersion ? { apiVersion } : {}),
+    };
+  }
+
+  if (apiKey) {
+    return {
+      apiKey,
+      vertexai: false,
+      ...(apiVersion ? { apiVersion } : {}),
+    };
+  }
+
+  throw new Error(
+    'Missing AI credentials. Set VERTEX_API_KEY, or configure GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION for true Vertex AI mode.',
+  );
+};
+
 const getClient = () => {
   if (!genAI) {
-    const apiKey = process.env.VERTEX_API_KEY?.trim();
-
-    if (!apiKey) {
-      throw new Error('Missing VERTEX_API_KEY. Add it to the server environment before starting multiplayer.');
-    }
-
-    genAI = new GoogleGenAI({
-      apiKey,
-      vertexai: true,
-      apiVersion: 'v1',
-    });
+    genAI = new GoogleGenAI(getClientOptions());
   }
 
   return genAI;
@@ -301,7 +321,7 @@ const requestStructuredJson = async ({
             temperature: requestTemperature,
             thinkingConfig: getThinkingConfig(modelId),
             responseMimeType: 'application/json',
-            responseSchema: schema,
+            responseJsonSchema: schema,
           };
 
           if (typeof maxOutputTokens === 'number') {
@@ -391,8 +411,7 @@ export const generateMatchCategory = async (existingCategories, modelId = DEFAUL
       prompt,
       schema: categorySchema,
       temperature: 0.85,
-      maxOutputTokens: 200,
-      timeoutMs: 60000,
+      timeoutMs: 120000,
       repairTemperature: 0.2,
     });
 
@@ -433,8 +452,7 @@ export const judgeMatchTurn = async ({
       prompt,
       schema: judgingSchema,
       temperature: 0.2,
-      maxOutputTokens: 1024,
-      timeoutMs: 90000,
+      timeoutMs: 180000,
     });
 
     return applyWeightedWinner(judgingResult);

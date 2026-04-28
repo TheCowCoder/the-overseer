@@ -88,4 +88,7 @@ export interface MatchView {
   currentResultLog: PromptLog | null;
   winnerId: PlayerId | 'tie' | null;
   systemMessage: string | null;
+  aiCategoryGenerationInFlight: boolean;
+  aiCategoryGenerationAttempts: number;
+  aiCategoryGenerationErrors: string[];
 }

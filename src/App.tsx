@@ -567,6 +567,29 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
     <motion.div key="CATEGORY_SETUP" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex min-h-full flex-col">
       {renderSystemBanner()}
 
+      {matchView && matchView.aiCategoryGenerationErrors.length > 0 && (
+        <div className="mb-4 rounded-[1.75rem] border-2 border-red-200 bg-red-50 p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-red-400">Overseer Failure Log</p>
+              <h3 className="mt-1 text-lg font-black text-red-700">The fifth category did not generate.</h3>
+            </div>
+            <span className="rounded-full bg-white/80 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-red-600">
+              {matchView.aiCategoryGenerationAttempts} {matchView.aiCategoryGenerationAttempts === 1 ? 'attempt' : 'attempts'}
+            </span>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            {matchView.aiCategoryGenerationErrors.map((entry, index) => (
+              <div key={`${entry}-${index}`} className="rounded-2xl border border-red-200 bg-white/90 px-4 py-3 text-sm font-bold leading-relaxed text-red-700">
+                <span className="mr-2 text-[11px] font-black uppercase tracking-[0.18em] text-red-400">{index + 1}.</span>
+                {entry}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="mb-4 shrink-0 text-center">
         <h2 className="text-3xl font-black text-gray-800">Build The Board</h2>
         <p className="mt-2 text-sm font-bold text-gray-500">Top two slots belong to player one. Bottom two belong to player two. Lock in to summon the fifth category.</p>
@@ -618,9 +641,21 @@ export default function App({ onBack }: OnlineMultiplayerAppProps) {
       </div>
 
       <div className="mt-auto shrink-0">
-        <Button onClick={() => socket.emit('category:lock')} disabled={matchView?.categorySetupLockedPlayers.includes(selfId)}>
-          {matchView?.categorySetupLockedPlayers.includes(selfId) ? 'Categories Locked' : 'Lock In Categories'}
-        </Button>
+        {matchView && matchView.categorySetupLockedPlayers.length === 2 && matchView.aiCategoryGenerationErrors.length > 0 ? (
+          <Button onClick={() => socket.emit('category:retry-ai')} disabled={matchView.aiCategoryGenerationInFlight}>
+            {matchView.aiCategoryGenerationInFlight
+              ? 'Summoning Fifth Category...'
+              : `Retry Fifth Category #${matchView.aiCategoryGenerationAttempts + 1}`}
+          </Button>
+        ) : (
+          <Button onClick={() => socket.emit('category:lock')} disabled={matchView?.categorySetupLockedPlayers.includes(selfId) || matchView?.aiCategoryGenerationInFlight}>
+            {matchView?.aiCategoryGenerationInFlight
+              ? 'Summoning Fifth Category...'
+              : matchView?.categorySetupLockedPlayers.includes(selfId)
+                ? 'Categories Locked'
+                : 'Lock In Categories'}
+          </Button>
+        )}
       </div>
     </motion.div>
   );

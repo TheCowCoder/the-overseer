@@ -104,6 +104,9 @@ const createMatch = (playerOneSession, playerTwoSession) => ({
   currentResultLog: null,
   winnerId: null,
   systemMessage: 'Fill your two highlighted slots, then lock in to summon the fifth category.',
+  aiCategoryGenerationInFlight: false,
+  aiCategoryGenerationAttempts: 0,
+  aiCategoryGenerationErrors: [],
 });
 
 const getScore = (match, playerId) =>
@@ -169,7 +172,56 @@ const buildClientView = (match, viewerId) => ({
   currentResultLog: match.currentResultLog,
   winnerId: match.winnerId,
   systemMessage: match.systemMessage,
+  aiCategoryGenerationInFlight: match.aiCategoryGenerationInFlight,
+  aiCategoryGenerationAttempts: match.aiCategoryGenerationAttempts,
+  aiCategoryGenerationErrors: [...match.aiCategoryGenerationErrors],
 });
+
+const runAiCategoryGeneration = async (match) => {
+  if (match.aiCategoryGenerationInFlight) {
+    return;
+  }
+
+  match.aiCategoryGenerationInFlight = true;
+  match.aiCategoryGenerationAttempts += 1;
+  match.systemMessage = `The Overseer is generating the fifth category. Attempt ${match.aiCategoryGenerationAttempts}.`;
+  emitMatchUpdate(match);
+
+  try {
+    const manualCategories = match.categories.filter((category) => category.ownerId !== 'ai');
+    const generatedCategory = await generateMatchCategory(manualCategories, match.modelId);
+    const aiCategory = match.categories.find((category) => category.ownerId === 'ai');
+
+    if (aiCategory) {
+      aiCategory.name = generatedCategory.category_name;
+      aiCategory.description = generatedCategory.category_description;
+      aiCategory.createdBy = 'ai';
+    }
+
+    match.phase = 'category_review';
+    match.aiCategoryGenerationInFlight = false;
+    match.aiCategoryGenerationErrors = [];
+    match.categorySetupLockedPlayers = [];
+    match.categoryTypingPlayers = [];
+    match.reviewLockedPlayers = [];
+    match.previewSelections = {
+      player_1: null,
+      player_2: null,
+    };
+    match.systemMessage = 'Review the full board and press Start when both players are ready.';
+    emitMatchUpdate(match);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to generate the fifth category.';
+    match.aiCategoryGenerationInFlight = false;
+    match.categoryTypingPlayers = [];
+    match.aiCategoryGenerationErrors = [
+      ...match.aiCategoryGenerationErrors,
+      `Attempt ${match.aiCategoryGenerationAttempts}: ${message}`,
+    ];
+    match.systemMessage = `The Overseer failed to generate the fifth category on attempt ${match.aiCategoryGenerationAttempts}. Retry to continue.`;
+    emitMatchUpdate(match);
+  }
+};
 
 const emitMatchUpdate = (match) => {
   for (const playerId of PLAYER_IDS) {
@@ -483,6 +535,9 @@ io.on('connection', (socket) => {
     category.name = typeof name === 'string' ? name.trim().slice(0, 50) : '';
     category.description = typeof description === 'string' ? description.trim().slice(0, 220) : '';
     match.categoryTypingPlayers = match.categoryTypingPlayers.filter((entry) => entry !== playerId);
+    match.aiCategoryGenerationAttempts = 0;
+    match.aiCategoryGenerationErrors = [];
+    match.aiCategoryGenerationInFlight = false;
     match.systemMessage = null;
     emitMatchUpdate(match);
   });
@@ -537,35 +592,28 @@ io.on('connection', (socket) => {
       return;
     }
 
-    match.systemMessage = 'The Overseer is generating the fifth category.';
-    emitMatchUpdate(match);
+    await runAiCategoryGeneration(match);
+  });
 
-    try {
-      const manualCategories = match.categories.filter((category) => category.ownerId !== 'ai');
-      const generatedCategory = await generateMatchCategory(manualCategories, match.modelId);
-      const aiCategory = match.categories.find((category) => category.ownerId === 'ai');
+  socket.on('category:retry-ai', async () => {
+    const context = getMatchAndPlayer(socket);
 
-      if (aiCategory) {
-        aiCategory.name = generatedCategory.category_name;
-        aiCategory.description = generatedCategory.category_description;
-        aiCategory.createdBy = 'ai';
-      }
-
-      match.phase = 'category_review';
-      match.categorySetupLockedPlayers = [];
-      match.categoryTypingPlayers = [];
-      match.reviewLockedPlayers = [];
-      match.previewSelections = {
-        player_1: null,
-        player_2: null,
-      };
-      match.systemMessage = 'Review the full board and press Start when both players are ready.';
-      emitMatchUpdate(match);
-    } catch (error) {
-      match.categorySetupLockedPlayers = [];
-      match.systemMessage = error instanceof Error ? error.message : 'Failed to generate the fifth category.';
-      emitMatchUpdate(match);
+    if (!context) {
+      return;
     }
+
+    const { match } = context;
+
+    if (
+      match.phase !== 'category_setup'
+      || match.categorySetupLockedPlayers.length !== 2
+      || match.aiCategoryGenerationInFlight
+      || match.aiCategoryGenerationErrors.length === 0
+    ) {
+      return;
+    }
+
+    await runAiCategoryGeneration(match);
   });
 
   socket.on('category:preview', ({ categoryId }) => {
