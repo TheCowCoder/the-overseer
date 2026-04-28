@@ -1,0 +1,2 @@
+export const CATEGORY_ADHERENCE_MULTIPLIER: number;
+export const CATEGORY_ADHERENCE_MULTIPLIER_LABEL: string;

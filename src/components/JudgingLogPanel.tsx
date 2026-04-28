@@ -1,3 +1,4 @@
+import { CATEGORY_ADHERENCE_MULTIPLIER_LABEL } from '../../shared/judgingWeights.js';
 import type { Category, Player, PromptLog, RubricScores } from "../types";
 import { cn } from "./Button";
 
@@ -60,11 +61,20 @@ const PromptBubble = ({ player, text, isWinner, scores }: PromptBubbleProps) => 
 
       <div className="mt-4 space-y-2 rounded-[1.5rem] bg-gray-50 p-4">
         {RUBRIC_ROWS.map(({ key, label }) => {
+          const isWeightedCategory = key === 'adherence_to_category';
           const value = Math.max(0, Math.min(10, scores[key]));
           return (
-            <div key={key} className="grid grid-cols-[4.75rem_1fr] items-center gap-2">
-              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">{label}</span>
-              <div className="h-1.5 overflow-hidden rounded-full bg-gray-200">
+            <div key={key} className="grid grid-cols-[max-content_1fr] items-center gap-3">
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em]',
+                  isWeightedCategory ? 'border border-red-300 bg-red-500/10 text-red-600' : 'text-gray-400',
+                )}
+              >
+                <span>{label}</span>
+                {isWeightedCategory && <span className="text-[9px] text-red-500">{CATEGORY_ADHERENCE_MULTIPLIER_LABEL}</span>}
+              </span>
+              <div className={cn('h-1.5 overflow-hidden rounded-full bg-gray-200', isWeightedCategory && 'bg-red-100')}>
                 <div
                   className="h-full rounded-full"
                   style={{

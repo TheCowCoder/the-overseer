@@ -1,0 +1,76 @@
+My idea:
+"""
+LLM powered RPS shoot where you can be anything
+
+
+UI flow:
+Main menu
+Play VS bot
+Left and right circular avatars with dot dot dot under, animated when typing
+rounded corner prompt input below that grows in height with more lines
+You type something and hit submit
+The LLM judges
+
+Brainstorm judging flow, see attached projects for how they do judging as they're similar.
+
+For response format use the-overseer please, and same text lengths as the overseer (1-2 sentences for player a, 1-2 for player b, 1 for verdict)
+
+then a retry button.
+
+DO NOT ADD LEARNING YET! Bot's memory should wipe on retry.
+
+
+Ask questions to narrow down any gaps I left unresolved.
+
+
+Duolingo raised 3d compressable theme, see image
+"""
+AIs response:
+"""
+This sounds like a hilariously chaotic game concept. Taking the "anything can be a weapon" logic and applying the `the-overseer` judging style with a chunky, tactile Duolingo 3D UI is a great combo.
+
+Before I write the code to wire up the UI and the Gemini prompts, I have a few game design questions to make sure the "RPS" (Rock-Paper-Scissors) mechanic feels fair and fun:
+
+### 1. How does the Bot choose its "weapon"?
+Since RPS relies on simultaneous reveals, how should we handle the bot's turn? 
+* **Option A (True Blind):** The player presses "Start", the bot secretly generates its weapon (e.g., "A sentient black hole") and shows a "Ready" indicator. The player types their weapon, submits, and *then* both are revealed to the judge.
+* **Option B (Reactive but fair):** The player types their weapon first. We send it to the LLM and ask it to generate the Bot's weapon *and* the judgment in one go, instructing the AI "Pick something that has a 50/50 chance of winning, don't just hard-counter the player."
+* **Option C (Drafting):** The game gives a random prompt like "Things found in a kitchen." The player types "A rusty blender" and the bot types "A radioactive microwave." 
+
+### 2. Is there Health/HP, or is it a One-Shot?
+* Are we doing a best-of-3 format, or does a single round determine the ultimate winner, after which you immediately hit "Retry" to play a completely new matchup?
+
+### 3. Judging Rubric
+In *The Overseer*, we scored players on Wit, Creativity, and Adherence to Category (1-10). 
+* Do you want the Judge to output scores in the background to determine the winner mathematically (like Overseer), or should the Judge just use pure logic/vibes to decide who wins based on the matchup? 
+
+### 4. Avatars
+Since you can be *anything*, what should the circular avatars display? 
+* Just generic Player/Bot icons (like a human silhouette and a robot face)?
+* An AI-generated emoji that matches what they typed? (e.g., if you type "Supernova", it puts a 🌟 in your avatar circle after the reveal).
+
+---
+
+Once you clarify how the bot selects its move and the exact win condition, I'll build out the React + Tailwind components using the Duolingo 3D button classes (`border-b-4 active:border-b-0 active:translate-y-1`) and the Overseer judging schema!
+"""
+
+My chat message:
+"""
+1. The bot is not fed any input when generating it's turn since I don't want to teach it how to play just yet. Just option A
+There is a header with both players' names and avatars. Avatars have circular spinners on them when a player is typing. Use round start/stops to start/stop typing spinner animation. Show a green small pill with low padding saying "Locked in" next to avatar/username when a player locks in.
+2. I prefer single round
+3. This is a space for brainstorming. Consider The Overseer and What If. Read both projects in full. First list everything the overseer does to judge, and everything what-if uses to judge. Then make a list of what we take from each. Then make a proposal for a new judging system. Output all of these lists and show me your brainstorming process in chat.
+
+I don't remember how what-if judges.
+The thing I love about the-overseer judging is that there are 7 categories, 2 player texts, 1 verdict. The response format is well defined and short. The judging is forced to iteratively (auto-regressive) build on itself 7 times over before writing the final story. This is super comprehensive. I might want to mimic a structured output multistep judging flow.
+
+Assume a structured output multistep flow is idea A. Branch off and generate alternate ideas B and C, and expand on A, B, and C
+
+4. Players choose a color from 5 options when setting their username. That color is the BG for the avatar circle, with a head and torso icon.
+
+Brainstorm response format, noting that I want to copy the-overseer.
+
+Don't miss a single one of my brainstorming requests this pass. This is a no-code pass. You must and may write prompts. Write them in full in codeblocks.
+
+Research objective: Analyze the judging frameworks of The Overseer and What If to synthesize a 'Multi-Step Adjudication Engine.' The goal is to create a prompt-based logic that prevents 'power-creep' (e.g., God vs. Super-God) while maintaining the snappy, structured output of The Overseer. Research existing LLM refereeing patterns to ensure the judge doesn't just pick the 'coolest' sounding word, but actually weighs the physical/magical properties of the inputs
+"""

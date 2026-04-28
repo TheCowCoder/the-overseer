@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CATEGORY_ADHERENCE_MULTIPLIER, CATEGORY_ADHERENCE_MULTIPLIER_LABEL } from '../shared/judgingWeights.js';
 import { DEFAULT_MODEL_ID } from '../shared/modelOptions.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -119,6 +120,67 @@ const isRetryableVertexError = (error) => {
 
 const isInvalidJsonError = (error) => error instanceof Error && /invalid JSON/i.test(error.message);
 
+const getThinkingConfig = (modelId = DEFAULT_MODEL_ID) => {
+  if (modelId.startsWith('gemini-3')) {
+    return {
+      thinkingLevel: 'high',
+    };
+  }
+
+  if (modelId === 'gemini-2.5-pro') {
+    return {
+      thinkingBudget: 32768,
+    };
+  }
+
+  if (modelId === 'gemini-2.5-flash') {
+    return {
+      thinkingBudget: 24576,
+    };
+  }
+
+  return {
+    thinkingBudget: -1,
+  };
+};
+
+const getWeightedRubricTotal = (scores) =>
+  scores.wit
+  + scores.creativity
+  + scores.adherence_to_category * CATEGORY_ADHERENCE_MULTIPLIER
+  + scores.bonus_for_media_politics_references
+  + scores.effort
+  + scores.elegance_of_prose
+  + scores.impressiveness;
+
+const applyWeightedWinner = (judgingResult) => {
+  const playerOneTotal = getWeightedRubricTotal(judgingResult.player_1_scores);
+  const playerTwoTotal = getWeightedRubricTotal(judgingResult.player_2_scores);
+
+  const weightedWinnerId = playerOneTotal === playerTwoTotal
+    ? 'tie'
+    : playerOneTotal > playerTwoTotal
+      ? 'player_1'
+      : 'player_2';
+
+  if (weightedWinnerId === judgingResult.winner_id) {
+    return {
+      ...judgingResult,
+      winner_id: weightedWinnerId,
+    };
+  }
+
+  const verdictSentence = weightedWinnerId === 'tie'
+    ? `Even with ${CATEGORY_ADHERENCE_MULTIPLIER_LABEL} category weighting, the round remains deadlocked.`
+    : `${weightedWinnerId === 'player_1' ? 'Player 1' : 'Player 2'} takes the round once category adherence receives its ${CATEGORY_ADHERENCE_MULTIPLIER_LABEL} weight.`;
+
+  return {
+    ...judgingResult,
+    winner_id: weightedWinnerId,
+    verdict_sentence: verdictSentence,
+  };
+};
+
 const withRetry = async (run, maxRetries) => {
   let attempt = 0;
 
@@ -234,20 +296,24 @@ const requestStructuredJson = async ({
   const requestContent = (promptText, requestTemperature) =>
     withTimeout(
       withRetry(
-        () =>
-          getClient().models.generateContent({
+        () => {
+          const config = {
+            temperature: requestTemperature,
+            thinkingConfig: getThinkingConfig(modelId),
+            responseMimeType: 'application/json',
+            responseSchema: schema,
+          };
+
+          if (typeof maxOutputTokens === 'number') {
+            config.maxOutputTokens = maxOutputTokens;
+          }
+
+          return getClient().models.generateContent({
             model: modelId,
             contents: promptText,
-            config: {
-              temperature: requestTemperature,
-              maxOutputTokens,
-              thinkingConfig: {
-                thinkingBudget: 0,
-              },
-              responseMimeType: 'application/json',
-              responseSchema: schema,
-            },
-          }),
+            config,
+          });
+        },
         1,
       ),
       timeoutMs,
@@ -326,7 +392,7 @@ export const generateMatchCategory = async (existingCategories, modelId = DEFAUL
       schema: categorySchema,
       temperature: 0.85,
       maxOutputTokens: 200,
-      timeoutMs: 30000,
+      timeoutMs: 60000,
       repairTemperature: 0.2,
     });
 
@@ -361,15 +427,17 @@ export const judgeMatchTurn = async ({
       .replace('{{player_1_text}}', playerOneText)
       .replace('{{player_2_text}}', playerTwoText);
 
-    return await requestStructuredJson({
+    const judgingResult = await requestStructuredJson({
       action: 'judge a turn',
       modelId,
       prompt,
       schema: judgingSchema,
       temperature: 0.2,
-      maxOutputTokens: 1600,
-      timeoutMs: 45000,
+      maxOutputTokens: 1024,
+      timeoutMs: 90000,
     });
+
+    return applyWeightedWinner(judgingResult);
   } catch (error) {
     throw formatVertexError(error, 'judge a turn');
   }
