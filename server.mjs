@@ -81,7 +81,8 @@ const createMatch = (playerOneSession, playerTwoSession) => ({
   categories: [
     createEmptyCategory(0, 'player_1'),
     createEmptyCategory(1, 'player_1'),
-    createEmptyCategory(2, 'ai'),
+    // AI category is not captured or counted for win at start
+    { ...createEmptyCategory(2, 'ai'), capturedBy: null, history: [], name: '', description: '' },
     createEmptyCategory(3, 'player_2'),
     createEmptyCategory(4, 'player_2'),
   ],
@@ -109,8 +110,13 @@ const createMatch = (playerOneSession, playerTwoSession) => ({
   aiCategoryGenerationErrors: [],
 });
 
+// Only count categories that have a name and are not AI-owned for win condition
 const getScore = (match, playerId) =>
-  match.categories.filter((category) => category.capturedBy === playerId).length;
+  match.categories.filter((category) =>
+    category.capturedBy === playerId &&
+    category.ownerId !== 'ai' &&
+    category.name.trim().length > 0
+  ).length;
 
 const getOwnSetupCategories = (match, playerId) =>
   match.categories.filter((category) => category.ownerId === playerId);
@@ -843,9 +849,10 @@ io.on('connection', (socket) => {
       };
       match.activePlayer = otherPlayerId(match.activePlayer);
 
-      if (getScore(match, 'player_1') >= 3) {
+      // Only allow win if at least one round has been played (at least one category captured)
+      if (getScore(match, 'player_1') >= 3 && match.categories.some(c => c.capturedBy === 'player_1')) {
         finishMatchWithWinner(match, 'player_1', `${match.players.player_1.name} has seized three categories and taken the crown.`);
-      } else if (getScore(match, 'player_2') >= 3) {
+      } else if (getScore(match, 'player_2') >= 3 && match.categories.some(c => c.capturedBy === 'player_2')) {
         finishMatchWithWinner(match, 'player_2', `${match.players.player_2.name} has seized three categories and taken the crown.`);
       } else {
         match.phase = 'results';
